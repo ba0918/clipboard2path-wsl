@@ -12,11 +12,14 @@ use domain::cleanup::{self, FileEntry};
 use domain::cli::{self, Command, Verbosity, WatchArgs};
 use domain::runtime_dir;
 use domain::shell_detect;
+use domain::systemd_unit;
 use domain::wsl_detect;
 use infra::clipboard::WlClipboard;
+use infra::command_runner::RealCommandRunner;
 use infra::file_system::RealFileWriter;
 use infra::lifecycle::{DaemonLifecycle, FsDaemonLifecycle};
 use infra::shell_installer::{FsShellInstaller, ShellInstaller};
+use infra::systemd_installer::{FsSystemdInstaller, SystemdInstaller};
 use service::converter::{ConvertService, SystemTimestamp};
 use service::daemon::{self, PollResult};
 
@@ -47,40 +50,111 @@ fn main() {
 
 fn run_init(args: cli::InitArgs) {
     let shell = resolve_shell(args.shell.as_deref());
-    let home = std::env::var("HOME").unwrap_or_else(|_| {
-        eprintln!("error: $HOME is not set");
-        process::exit(1);
-    });
+    let home = resolve_home();
+    let mut has_error = false;
 
-    let installer = FsShellInstaller::new(home);
-    match installer.install(shell, args.force) {
+    // Shell hook installation (force=true for idempotent updates)
+    let shell_installer = FsShellInstaller::new(home.clone());
+    match shell_installer.install(shell, true) {
         Ok(path) => {
             eprintln!("installed: shell hook for {shell} at {path}");
         }
         Err(e) => {
-            eprintln!("error: {e}");
-            process::exit(1);
+            eprintln!("error: shell hook: {e}");
+            has_error = true;
         }
+    }
+
+    // Systemd service installation
+    if !args.no_service {
+        match install_systemd_service(&home) {
+            Ok(()) => {
+                eprintln!("installed: systemd service");
+            }
+            Err(e) => {
+                eprintln!("error: systemd service: {e}");
+                has_error = true;
+            }
+        }
+    } else {
+        eprintln!("skipped: systemd service (--no-service)");
+    }
+
+    if has_error {
+        process::exit(1);
     }
 }
 
 fn run_uninstall(args: cli::UninstallArgs) {
     let shell = resolve_shell(args.shell.as_deref());
-    let home = std::env::var("HOME").unwrap_or_else(|_| {
-        eprintln!("error: $HOME is not set");
-        process::exit(1);
-    });
+    let home = resolve_home();
+    let mut has_error = false;
 
-    let installer = FsShellInstaller::new(home);
-    match installer.uninstall(shell) {
+    // Shell hook removal
+    let shell_installer = FsShellInstaller::new(home.clone());
+    match shell_installer.uninstall(shell) {
         Ok(path) => {
             eprintln!("uninstalled: shell hook for {shell} from {path}");
         }
         Err(e) => {
-            eprintln!("error: {e}");
-            process::exit(1);
+            eprintln!("error: shell hook: {e}");
+            has_error = true;
         }
     }
+
+    // Systemd service removal
+    if !args.no_service {
+        let runner = RealCommandRunner;
+        let systemd_installer = FsSystemdInstaller::new(runner);
+        match systemd_installer.uninstall(&home) {
+            Ok(()) => {
+                eprintln!("uninstalled: systemd service");
+            }
+            Err(e) => {
+                eprintln!("error: systemd service: {e}");
+                has_error = true;
+            }
+        }
+    } else {
+        eprintln!("skipped: systemd service (--no-service)");
+    }
+
+    if has_error {
+        process::exit(1);
+    }
+}
+
+/// Install the systemd user service.
+fn install_systemd_service(home: &str) -> Result<(), String> {
+    // Get binary path
+    let exec_path = std::env::current_exe()
+        .and_then(|p| p.canonicalize())
+        .map_err(|e| format!("failed to resolve binary path: {e}"))?;
+    let exec_path_str = exec_path.to_string_lossy();
+
+    // Get UID from /proc/self/status
+    let proc_status = std::fs::read_to_string("/proc/self/status")
+        .map_err(|e| format!("failed to read /proc/self/status: {e}"))?;
+    let uid = systemd_unit::parse_uid_from_proc_status(&proc_status)
+        .map_err(|e| format!("failed to parse UID: {e}"))?;
+
+    // Generate unit file content
+    let unit_content = systemd_unit::generate_unit(&exec_path_str, uid);
+
+    // Install via systemd installer
+    let runner = RealCommandRunner;
+    let installer = FsSystemdInstaller::new(runner);
+    installer
+        .install(&unit_content, home)
+        .map_err(|e| e.to_string())
+}
+
+/// Resolve $HOME or exit.
+fn resolve_home() -> String {
+    std::env::var("HOME").unwrap_or_else(|_| {
+        eprintln!("error: $HOME is not set");
+        process::exit(1);
+    })
 }
 
 fn run_status() {
