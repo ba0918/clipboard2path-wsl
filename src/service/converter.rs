@@ -100,6 +100,11 @@ where
         }
     }
 
+    /// Access the clipboard reader (for use by daemon's poll loop).
+    pub fn reader(&self) -> &C {
+        &self.clipboard_reader
+    }
+
     /// Execute a single conversion: read BMP from clipboard, convert to PNG,
     /// save to file, write path back to clipboard.
     pub fn convert_once(&self, base_dir: &Path) -> Result<PathBuf, AppError> {
@@ -141,6 +146,10 @@ mod tests {
         fn read_image_bmp(&self) -> Result<Vec<u8>, ClipboardError> {
             Ok(self.data.clone())
         }
+
+        fn list_types(&self) -> Result<Vec<String>, ClipboardError> {
+            Ok(vec!["image/bmp".to_string()])
+        }
     }
 
     struct FailingClipboardReader;
@@ -151,6 +160,10 @@ mod tests {
                 tool: "wl-paste".to_string(),
                 stderr: "no image in clipboard".to_string(),
             })
+        }
+
+        fn list_types(&self) -> Result<Vec<String>, ClipboardError> {
+            Ok(vec![])
         }
     }
 

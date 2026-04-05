@@ -32,6 +32,8 @@ impl fmt::Display for ClipboardError {
 /// Read image data from the clipboard.
 pub trait ClipboardReader {
     fn read_image_bmp(&self) -> Result<Vec<u8>, ClipboardError>;
+    /// List available MIME types in the clipboard.
+    fn list_types(&self) -> Result<Vec<String>, ClipboardError>;
 }
 
 /// Write text to the clipboard.
@@ -43,6 +45,34 @@ pub trait ClipboardWriter {
 pub struct WlClipboard;
 
 impl ClipboardReader for WlClipboard {
+    fn list_types(&self) -> Result<Vec<String>, ClipboardError> {
+        let output = Command::new("wl-paste")
+            .arg("--list-types")
+            .output()
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ClipboardError::ToolNotFound("wl-paste".to_string())
+                } else {
+                    ClipboardError::SpawnFailed(e.to_string())
+                }
+            })?;
+
+        if !output.status.success() {
+            return Err(ClipboardError::CommandFailed {
+                tool: "wl-paste".to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            });
+        }
+
+        let types = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        Ok(types)
+    }
+
     fn read_image_bmp(&self) -> Result<Vec<u8>, ClipboardError> {
         let output = Command::new("wl-paste")
             .arg("--type")
@@ -123,6 +153,10 @@ mod tests {
                     stderr: msg.to_string(),
                 }),
             }
+        }
+
+        fn list_types(&self) -> Result<Vec<String>, ClipboardError> {
+            Ok(vec!["image/bmp".to_string()])
         }
     }
 

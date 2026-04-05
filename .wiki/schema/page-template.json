@@ -1,0 +1,12 @@
+{
+  "fields": {
+    "title":       { "type": "string",   "required": true,  "description": "Article title" },
+    "type":        { "type": "string",   "required": true,  "enum": ["wiki"], "description": "Always 'wiki'" },
+    "source_refs": { "type": "array",    "required": true,  "items": "string", "description": "Paths to source files in raw/" },
+    "created":     { "type": "date",     "required": true,  "description": "ISO 8601 date created" },
+    "updated":     { "type": "date",     "required": true,  "description": "ISO 8601 date last updated" },
+    "category":    { "type": "string",   "required": true,  "description": "Category from categories.json" },
+    "tags":        { "type": "array",    "required": false, "items": "string", "description": "Free-form tags" },
+    "related":     { "type": "array",    "required": false, "items": "string", "description": "Wikilinks to related concepts" }
+  }
+}
