@@ -6,15 +6,12 @@ use std::path::Path;
 pub enum FsError {
     /// I/O error during file write.
     IoError(String),
-    /// Failed to set file permissions.
-    PermissionError(String),
 }
 
 impl fmt::Display for FsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FsError::IoError(msg) => write!(f, "I/O error: {msg}"),
-            FsError::PermissionError(msg) => write!(f, "permission error: {msg}"),
         }
     }
 }
