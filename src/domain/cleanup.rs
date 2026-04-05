@@ -10,18 +10,6 @@ pub struct FileEntry {
     pub age: Duration,
 }
 
-/// Determine which files should be deleted based on age threshold.
-///
-/// Pure function: takes a list of file entries and a max age, returns
-/// the paths that exceed the threshold.
-pub fn files_to_clean_by_age(entries: &[FileEntry], max_age: Duration) -> Vec<PathBuf> {
-    entries
-        .iter()
-        .filter(|e| e.age > max_age)
-        .map(|e| e.path.clone())
-        .collect()
-}
-
 /// Determine which files should be deleted to stay under a max count.
 ///
 /// Files are assumed to be sorted oldest-first. Returns excess files
@@ -49,25 +37,6 @@ mod tests {
             path: PathBuf::from(format!("/tmp/{name}")),
             age: Duration::from_secs(secs),
         }
-    }
-
-    #[test]
-    fn age_cleanup_removes_old_files() {
-        let entries = vec![
-            entry("clipboard-1.png", 3600),  // 1 hour old
-            entry("clipboard-2.png", 90000), // 25 hours old
-            entry("clipboard-3.png", 100),   // recent
-        ];
-        let max_age = Duration::from_secs(86400); // 24 hours
-        let result = files_to_clean_by_age(&entries, max_age);
-        assert_eq!(result, vec![PathBuf::from("/tmp/clipboard-2.png")]);
-    }
-
-    #[test]
-    fn age_cleanup_empty_when_all_recent() {
-        let entries = vec![entry("clipboard-1.png", 100)];
-        let max_age = Duration::from_secs(86400);
-        assert!(files_to_clean_by_age(&entries, max_age).is_empty());
     }
 
     #[test]

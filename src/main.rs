@@ -142,10 +142,8 @@ where
 }
 
 fn run_cleanup(base_dir: &Path, max_files: usize, verbosity: Verbosity) {
-    let max_age = Duration::from_secs(86400); // 24 hours
-
     // Collect file entries
-    let entries: Vec<FileEntry> = match std::fs::read_dir(base_dir) {
+    let mut entries: Vec<FileEntry> = match std::fs::read_dir(base_dir) {
         Ok(dir) => dir
             .filter_map(|e| e.ok())
             .filter(|e| {
@@ -167,17 +165,10 @@ fn run_cleanup(base_dir: &Path, max_files: usize, verbosity: Verbosity) {
         Err(_) => return,
     };
 
-    // Clean by age
-    for path in cleanup::files_to_clean_by_age(&entries, max_age) {
-        let _ = std::fs::remove_file(&path);
-        log_verbose(verbosity, &format!("cleanup: removed {}", path.display()));
-    }
+    // Sort oldest first, then remove excess by count
+    entries.sort_by(|a, b| b.age.cmp(&a.age));
 
-    // Re-collect remaining entries for count-based cleanup
-    let mut remaining: Vec<FileEntry> = entries.into_iter().filter(|e| e.age <= max_age).collect();
-    remaining.sort_by(|a, b| b.age.cmp(&a.age)); // oldest first
-
-    for path in cleanup::files_to_clean_by_count(&remaining, max_files) {
+    for path in cleanup::files_to_clean_by_count(&entries, max_files) {
         let _ = std::fs::remove_file(&path);
         log_verbose(verbosity, &format!("cleanup: removed {}", path.display()));
     }
