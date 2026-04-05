@@ -6,4 +6,5 @@ pub mod path_gen;
 pub mod runtime_dir;
 pub mod shell_detect;
 pub mod shell_hook;
+pub mod systemd_unit;
 pub mod wsl_detect;
