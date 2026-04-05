@@ -111,10 +111,10 @@ impl<R: CommandRunner> SystemdInstaller for FsSystemdInstaller<R> {
 
     fn is_active(&self) -> Result<String, String> {
         // is-active returns non-zero for inactive/failed, but we want the output regardless
-        match self
-            .runner
-            .run("systemctl", &["--user", "is-active", systemd_unit::SERVICE_NAME])
-        {
+        match self.runner.run(
+            "systemctl",
+            &["--user", "is-active", systemd_unit::SERVICE_NAME],
+        ) {
             Ok(output) => Ok(output),
             Err(e) => {
                 // systemctl is-active returns exit code 3 for "inactive", which our runner

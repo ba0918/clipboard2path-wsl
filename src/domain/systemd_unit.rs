@@ -41,9 +41,10 @@ pub fn unit_install_path(home: &str) -> String {
 pub fn parse_uid_from_proc_status(content: &str) -> Result<u32, String> {
     for line in content.lines() {
         if let Some(rest) = line.strip_prefix("Uid:") {
-            let uid_str = rest.split_whitespace().next().ok_or_else(|| {
-                "Uid line found but no value present".to_string()
-            })?;
+            let uid_str = rest
+                .split_whitespace()
+                .next()
+                .ok_or_else(|| "Uid line found but no value present".to_string())?;
             return uid_str
                 .parse::<u32>()
                 .map_err(|e| format!("failed to parse UID '{uid_str}': {e}"));
@@ -105,7 +106,8 @@ mod tests {
 
     #[test]
     fn parse_uid_from_proc_status_typical() {
-        let content = "Name:\tclipboard2path\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\n";
+        let content =
+            "Name:\tclipboard2path\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\n";
         assert_eq!(parse_uid_from_proc_status(content), Ok(1000));
     }
 

@@ -20,7 +20,10 @@ impl fmt::Display for InstallError {
         match self {
             InstallError::IoError(msg) => write!(f, "install error: {msg}"),
             InstallError::AlreadyExists(path) => {
-                write!(f, "hook already exists at {path} (use --force to overwrite)")
+                write!(
+                    f,
+                    "hook already exists at {path} (use --force to overwrite)"
+                )
             }
         }
     }

@@ -38,7 +38,9 @@ impl DaemonLifecycle for FsDaemonLifecycle {
             .recursive(true)
             .mode(0o700)
             .create(dir)
-            .map_err(|e| LifecycleError::IoError(format!("failed to create {}: {e}", dir.display())))
+            .map_err(|e| {
+                LifecycleError::IoError(format!("failed to create {}: {e}", dir.display()))
+            })
     }
 
     fn teardown(&self, dir: &Path) -> Result<(), LifecycleError> {
@@ -49,21 +51,18 @@ impl DaemonLifecycle for FsDaemonLifecycle {
         }
 
         // Remove all files in the directory
-        let entries =
-            fs::read_dir(dir).map_err(|e| LifecycleError::IoError(e.to_string()))?;
+        let entries = fs::read_dir(dir).map_err(|e| LifecycleError::IoError(e.to_string()))?;
 
         for entry in entries {
             let entry = entry.map_err(|e| LifecycleError::IoError(e.to_string()))?;
             let path = entry.path();
             if path.is_file() || path.is_symlink() {
-                fs::remove_file(&path)
-                    .map_err(|e| LifecycleError::IoError(e.to_string()))?;
+                fs::remove_file(&path).map_err(|e| LifecycleError::IoError(e.to_string()))?;
             }
         }
 
         // Remove the directory itself
-        fs::remove_dir(dir)
-            .map_err(|e| LifecycleError::IoError(e.to_string()))
+        fs::remove_dir(dir).map_err(|e| LifecycleError::IoError(e.to_string()))
     }
 }
 

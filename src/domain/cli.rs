@@ -291,8 +291,7 @@ mod tests {
 
     #[test]
     fn output_dir_flag() {
-        let Command::Watch(w) =
-            parse_args(&args(&["--output-dir", "/home/user/images"])).unwrap()
+        let Command::Watch(w) = parse_args(&args(&["--output-dir", "/home/user/images"])).unwrap()
         else {
             panic!("expected Watch");
         };
@@ -458,8 +457,7 @@ mod tests {
 
     #[test]
     fn uninstall_no_service_flag() {
-        let Command::Uninstall(a) =
-            parse_args(&args(&["uninstall", "--no-service"])).unwrap()
+        let Command::Uninstall(a) = parse_args(&args(&["uninstall", "--no-service"])).unwrap()
         else {
             panic!("expected Uninstall");
         };

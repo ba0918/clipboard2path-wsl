@@ -24,10 +24,7 @@ impl CommandRunner for RealCommandRunner {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let msg = if stderr.is_empty() { &stdout } else { &stderr };
-            Err(format!(
-                "'{program}' exited with {}: {msg}",
-                output.status
-            ))
+            Err(format!("'{program}' exited with {}: {msg}", output.status))
         }
     }
 }
@@ -79,8 +76,8 @@ pub mod testing {
 
 #[cfg(test)]
 mod tests {
-    use super::testing::MockCommandRunner;
     use super::CommandRunner;
+    use super::testing::MockCommandRunner;
 
     #[test]
     fn mock_records_calls() {

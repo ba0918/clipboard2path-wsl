@@ -282,10 +282,7 @@ mod tests {
         service.convert_once(Path::new("/tmp")).unwrap();
 
         let notified = service.path_notifier.notified.borrow().clone();
-        assert_eq!(
-            notified,
-            Some(PathBuf::from("/tmp/clipboard-99999.png"))
-        );
+        assert_eq!(notified, Some(PathBuf::from("/tmp/clipboard-99999.png")));
     }
 
     #[test]

@@ -44,7 +44,11 @@ impl PathNotifier for FilePathNotifier {
 
         // Atomic write to latest-path: write to temp file, then rename
         let tmp_path = self.runtime_dir.join(".latest-path.tmp");
-        atomic_write_file(&tmp_path, &latest_path_file, path.to_string_lossy().as_bytes())?;
+        atomic_write_file(
+            &tmp_path,
+            &latest_path_file,
+            path.to_string_lossy().as_bytes(),
+        )?;
 
         // Atomic symlink update: create temp symlink, then rename
         let tmp_link = self.runtime_dir.join(".latest.png.tmp");

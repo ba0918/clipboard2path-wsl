@@ -343,11 +343,8 @@ fn log_verbose(verbosity: Verbosity, msg: &str) {
     }
 }
 
-fn run_once<C, F, T, N>(
-    service: &ConvertService<C, F, T, N>,
-    base_dir: &Path,
-    verbosity: Verbosity,
-) where
+fn run_once<C, F, T, N>(service: &ConvertService<C, F, T, N>, base_dir: &Path, verbosity: Verbosity)
+where
     C: infra::clipboard::ClipboardReader,
     F: infra::file_system::FileWriter,
     T: service::converter::TimestampProvider,

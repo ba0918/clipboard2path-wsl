@@ -136,5 +136,4 @@ mod tests {
         let result = reader.read_image_bmp();
         assert!(result.is_err());
     }
-
 }

@@ -36,4 +36,8 @@ cargo fmt -- --check # フォーマットチェック
 - ドメインロジック（パス変換・クリップボード解析・シェル検出）は純粋関数として実装し、I/Oから分離する
 - クリップボード監視・ファイルシステムアクセスなどの外部依存はトレイトで抽象化し、DI可能にする
 - クリップボードは読み取り専用（ClipboardReader のみ）。書き込みは PathNotifier 経由でファイルに出力
-- サブコマンド: Watch（デフォルト）、Init、Uninstall
+- サブコマンド: Watch（デフォルト）、Init、Uninstall、Status
+- `init` はシェルフック設置 + systemd service 配置・有効化をワンコマンドで実行（`--no-service` でスキップ可能）
+- `uninstall` はシェルフック除去 + systemd service 停止・削除を実行
+- `status` はサービス状態、シェルフック状態、最新画像パスを表示
+- systemd unit ファイルは `init` 時に自動生成（リポジトリ内の静的ファイルは不要）
