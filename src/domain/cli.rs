@@ -22,6 +22,8 @@ pub enum Command {
     Init(InitArgs),
     /// Remove shell hook.
     Uninstall(UninstallArgs),
+    /// Show current status.
+    Status,
     /// Show help.
     Help,
     /// Show version.
@@ -62,6 +64,8 @@ pub struct InitArgs {
     pub shell: Option<String>,
     /// Force overwrite existing hook.
     pub force: bool,
+    /// Skip systemd service installation.
+    pub no_service: bool,
 }
 
 /// Arguments for the uninstall subcommand.
@@ -69,6 +73,8 @@ pub struct InitArgs {
 pub struct UninstallArgs {
     /// Optional shell name override (auto-detect from $SHELL if None).
     pub shell: Option<String>,
+    /// Skip systemd service removal.
+    pub no_service: bool,
 }
 
 /// CLI parsing error.
@@ -111,6 +117,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, CliError> {
     match args[0].as_str() {
         "init" => parse_init_args(&args[1..]),
         "uninstall" => parse_uninstall_args(&args[1..]),
+        "status" => Ok(Command::Status),
         _ => parse_watch_args(args),
     }
 }
@@ -162,11 +169,13 @@ fn parse_watch_args(args: &[String]) -> Result<Command, CliError> {
 fn parse_init_args(args: &[String]) -> Result<Command, CliError> {
     let mut shell = None;
     let mut force = false;
+    let mut no_service = false;
     let mut i = 0;
 
     while i < args.len() {
         match args[i].as_str() {
             "--force" | "-f" => force = true,
+            "--no-service" => no_service = true,
             other if !other.starts_with('-') && shell.is_none() => {
                 shell = Some(other.to_string());
             }
@@ -175,15 +184,21 @@ fn parse_init_args(args: &[String]) -> Result<Command, CliError> {
         i += 1;
     }
 
-    Ok(Command::Init(InitArgs { shell, force }))
+    Ok(Command::Init(InitArgs {
+        shell,
+        force,
+        no_service,
+    }))
 }
 
 fn parse_uninstall_args(args: &[String]) -> Result<Command, CliError> {
     let mut shell = None;
+    let mut no_service = false;
     let mut i = 0;
 
     while i < args.len() {
         match args[i].as_str() {
+            "--no-service" => no_service = true,
             other if !other.starts_with('-') && shell.is_none() => {
                 shell = Some(other.to_string());
             }
@@ -192,7 +207,7 @@ fn parse_uninstall_args(args: &[String]) -> Result<Command, CliError> {
         i += 1;
     }
 
-    Ok(Command::Uninstall(UninstallArgs { shell }))
+    Ok(Command::Uninstall(UninstallArgs { shell, no_service }))
 }
 
 /// Generate help text.
@@ -206,8 +221,9 @@ USAGE:
 
 COMMANDS:
     (default)           Watch clipboard and convert images (daemon mode)
-    init [SHELL]        Install shell hook (fish/bash/zsh, auto-detect if omitted)
-    uninstall [SHELL]   Remove shell hook
+    init [SHELL]        Install shell hook and systemd service
+    uninstall [SHELL]   Remove shell hook and systemd service
+    status              Show current status
 
 WATCH OPTIONS:
     --once              Run once and exit (no daemon loop)
@@ -219,6 +235,10 @@ WATCH OPTIONS:
 
 INIT OPTIONS:
     -f, --force         Force overwrite existing hook
+    --no-service        Skip systemd service installation
+
+UNINSTALL OPTIONS:
+    --no-service        Skip systemd service removal
 
 GLOBAL OPTIONS:
     -h, --help          Show this help
@@ -368,6 +388,7 @@ mod tests {
         };
         assert_eq!(a.shell, None);
         assert!(!a.force);
+        assert!(!a.no_service);
     }
 
     #[test]
@@ -395,6 +416,27 @@ mod tests {
         assert!(a.force);
     }
 
+    #[test]
+    fn init_no_service_flag() {
+        let Command::Init(a) = parse_args(&args(&["init", "--no-service"])).unwrap() else {
+            panic!("expected Init");
+        };
+        assert!(a.no_service);
+        assert!(!a.force);
+    }
+
+    #[test]
+    fn init_no_service_with_shell() {
+        let Command::Init(a) =
+            parse_args(&args(&["init", "fish", "--no-service", "--force"])).unwrap()
+        else {
+            panic!("expected Init");
+        };
+        assert_eq!(a.shell, Some("fish".to_string()));
+        assert!(a.no_service);
+        assert!(a.force);
+    }
+
     // --- Uninstall subcommand ---
 
     #[test]
@@ -403,6 +445,7 @@ mod tests {
             panic!("expected Uninstall");
         };
         assert_eq!(a.shell, None);
+        assert!(!a.no_service);
     }
 
     #[test]
@@ -411,5 +454,36 @@ mod tests {
             panic!("expected Uninstall");
         };
         assert_eq!(a.shell, Some("zsh".to_string()));
+    }
+
+    #[test]
+    fn uninstall_no_service_flag() {
+        let Command::Uninstall(a) =
+            parse_args(&args(&["uninstall", "--no-service"])).unwrap()
+        else {
+            panic!("expected Uninstall");
+        };
+        assert!(a.no_service);
+    }
+
+    // --- Status subcommand ---
+
+    #[test]
+    fn status_command() {
+        assert_eq!(parse_args(&args(&["status"])).unwrap(), Command::Status);
+    }
+
+    // --- Help text ---
+
+    #[test]
+    fn help_text_contains_status() {
+        let help = help_text();
+        assert!(help.contains("status"));
+    }
+
+    #[test]
+    fn help_text_contains_no_service() {
+        let help = help_text();
+        assert!(help.contains("--no-service"));
     }
 }

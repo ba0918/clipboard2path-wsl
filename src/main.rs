@@ -40,6 +40,7 @@ fn main() {
         }
         Command::Init(args) => run_init(args),
         Command::Uninstall(args) => run_uninstall(args),
+        Command::Status => run_status(),
         Command::Watch(args) => run_watch(args),
     }
 }
@@ -80,6 +81,12 @@ fn run_uninstall(args: cli::UninstallArgs) {
             process::exit(1);
         }
     }
+}
+
+fn run_status() {
+    // Placeholder — full implementation in Step 7
+    eprintln!("status: not yet implemented");
+    process::exit(1);
 }
 
 /// Resolve shell type from explicit name or $SHELL env var.
