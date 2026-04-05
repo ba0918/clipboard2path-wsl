@@ -182,9 +182,57 @@ fn resolve_home() -> String {
 }
 
 fn run_status() {
-    // Placeholder — full implementation in Step 7
-    eprintln!("status: not yet implemented");
-    process::exit(1);
+    let home = resolve_home();
+
+    println!("clipboard2path-wsl status:");
+
+    // Service status
+    let runner = RealCommandRunner;
+    let systemd = FsSystemdInstaller::new(runner);
+    if systemd.is_installed(&home) {
+        match systemd.is_active() {
+            Ok(status) => println!("  service: {status}"),
+            Err(e) => println!("  service: error ({e})"),
+        }
+    } else {
+        println!("  service: not installed");
+    }
+
+    // Shell hook status
+    let shell_env = std::env::var("SHELL").unwrap_or_default();
+    let shell_installer = FsShellInstaller::new(home.clone());
+    match shell_detect::detect_shell(&shell_env) {
+        Ok(shell) => {
+            if shell_installer.is_installed(shell) {
+                println!("  shell hook: installed ({shell})");
+            } else {
+                println!("  shell hook: not installed");
+            }
+        }
+        Err(_) => {
+            println!("  shell hook: unknown shell");
+        }
+    }
+
+    // Latest image path
+    let xdg = std::env::var("XDG_RUNTIME_DIR").ok();
+    match runtime_dir::resolve_runtime_dir(xdg.as_deref()) {
+        Ok(dir) => {
+            let latest_path = dir.join("latest-path");
+            match std::fs::read_to_string(&latest_path) {
+                Ok(content) => {
+                    let path = content.trim();
+                    if path.is_empty() {
+                        println!("  latest image: (none)");
+                    } else {
+                        println!("  latest image: {path}");
+                    }
+                }
+                Err(_) => println!("  latest image: (none)"),
+            }
+        }
+        Err(_) => println!("  latest image: (none)"),
+    }
 }
 
 /// Resolve shell type from explicit name or $SHELL env var.

@@ -30,6 +30,7 @@ impl fmt::Display for InstallError {
 pub trait ShellInstaller {
     fn install(&self, shell: ShellType, force: bool) -> Result<String, InstallError>;
     fn uninstall(&self, shell: ShellType) -> Result<String, InstallError>;
+    fn is_installed(&self, shell: ShellType) -> bool;
 }
 
 /// Real filesystem-based installer.
@@ -59,6 +60,20 @@ impl ShellInstaller for FsShellInstaller {
         match shell {
             ShellType::Fish => uninstall_fish_hook(&self.home_dir),
             ShellType::Bash | ShellType::Zsh => uninstall_rc_hook(&self.home_dir, shell),
+        }
+    }
+
+    fn is_installed(&self, shell: ShellType) -> bool {
+        match shell {
+            ShellType::Fish => {
+                let target = shell_hook::hook_install_path(ShellType::Fish, &self.home_dir);
+                Path::new(&target).exists()
+            }
+            ShellType::Bash | ShellType::Zsh => {
+                let rc_path = shell_hook::hook_install_path(shell, &self.home_dir);
+                let content = std::fs::read_to_string(&rc_path).unwrap_or_default();
+                content.contains(shell_hook::HOOK_MARKER)
+            }
         }
     }
 }
@@ -258,6 +273,81 @@ mod tests {
         installer.install(ShellType::Fish, false).unwrap();
         let target = installer.uninstall(ShellType::Fish).unwrap();
         assert!(!Path::new(&target).exists());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn is_installed_fish_true_when_file_exists() {
+        let tmp = std::env::temp_dir().join("clipboard2path_test_fish_is_installed_true");
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        let home = tmp.to_string_lossy().to_string();
+        let installer = FsShellInstaller::new(home);
+        installer.install(ShellType::Fish, false).unwrap();
+
+        assert!(installer.is_installed(ShellType::Fish));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn is_installed_fish_false_when_no_file() {
+        let tmp = std::env::temp_dir().join("clipboard2path_test_fish_is_installed_false");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let home = tmp.to_string_lossy().to_string();
+        let installer = FsShellInstaller::new(home);
+
+        assert!(!installer.is_installed(ShellType::Fish));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn is_installed_bash_true_when_marker_present() {
+        let tmp = std::env::temp_dir().join("clipboard2path_test_bash_is_installed_true");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let bashrc = tmp.join(".bashrc");
+        std::fs::write(&bashrc, "existing\n").unwrap();
+
+        let home = tmp.to_string_lossy().to_string();
+        let installer = FsShellInstaller::new(home);
+        installer.install(ShellType::Bash, false).unwrap();
+
+        assert!(installer.is_installed(ShellType::Bash));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn is_installed_bash_false_when_no_marker() {
+        let tmp = std::env::temp_dir().join("clipboard2path_test_bash_is_installed_false");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let bashrc = tmp.join(".bashrc");
+        std::fs::write(&bashrc, "just normal content\n").unwrap();
+
+        let home = tmp.to_string_lossy().to_string();
+        let installer = FsShellInstaller::new(home);
+
+        assert!(!installer.is_installed(ShellType::Bash));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn is_installed_zsh_false_when_no_rc_file() {
+        let tmp = std::env::temp_dir().join("clipboard2path_test_zsh_is_installed_false");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let home = tmp.to_string_lossy().to_string();
+        let installer = FsShellInstaller::new(home);
+
+        assert!(!installer.is_installed(ShellType::Zsh));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
