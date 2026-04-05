@@ -1,7 +1,7 @@
 # clipboard2path-wsl 実装計画
 
 - **作成日**: 2026-04-06
-- **ステータス**: 🔵 implementing
+- **ステータス**: 🟢 complete
 - **起源**: [チーム壁打ち](../ideas/001-implementation-strategy.md)
 
 ## 概要
