@@ -135,6 +135,12 @@ where
 
         Ok(save_path)
     }
+
+    /// Clear the path notification (clipboard no longer has an image).
+    pub fn clear_notification(&self) -> Result<(), AppError> {
+        self.path_notifier.clear()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -191,6 +197,11 @@ mod tests {
     impl PathNotifier for MockPathNotifier {
         fn notify(&self, path: &Path) -> Result<(), NotifyError> {
             *self.notified.borrow_mut() = Some(path.to_path_buf());
+            Ok(())
+        }
+
+        fn clear(&self) -> Result<(), NotifyError> {
+            *self.notified.borrow_mut() = None;
             Ok(())
         }
     }

@@ -14,14 +14,20 @@ pub fn generate_hook(shell: ShellType) -> String {
 }
 
 fn generate_fish_hook() -> String {
-    r#"function fish_clipboard_paste
+    r#"function __clipboard2path_paste
     set -l latest_path "$XDG_RUNTIME_DIR/clipboard2path/latest-path"
-    if test -f "$latest_path"; and wl-paste --list-types 2>/dev/null | string match -q '*image/bmp*'
-        commandline -i -- (string trim -- (cat "$latest_path"))
-    else
-        commandline -i -- (wl-paste -n 2>/dev/null)
+    if test -f "$latest_path"
+        set -l path (string trim -- (cat "$latest_path"))
+        if test -n "$path"
+            commandline -i -- $path
+            return
+        end
     end
+    commandline -i -- (wl-paste -n 2>/dev/null)
 end
+
+bind \ev '__clipboard2path_paste'
+bind -M insert \ev '__clipboard2path_paste'
 "#
     .to_string()
 }
@@ -29,19 +35,21 @@ end
 fn generate_bash_hook() -> String {
     r#"clipboard2path_paste() {
     local latest_path="$XDG_RUNTIME_DIR/clipboard2path/latest-path"
-    if [[ -f "$latest_path" ]] && wl-paste --list-types 2>/dev/null | grep -q 'image/bmp'; then
+    if [[ -f "$latest_path" ]]; then
         local path
         path="$(cat "$latest_path")"
-        READLINE_LINE="${READLINE_LINE:0:$READLINE_POINT}${path}${READLINE_LINE:$READLINE_POINT}"
-        READLINE_POINT=$(( READLINE_POINT + ${#path} ))
-    else
-        local text
-        text="$(wl-paste -n 2>/dev/null)"
-        READLINE_LINE="${READLINE_LINE:0:$READLINE_POINT}${text}${READLINE_LINE:$READLINE_POINT}"
-        READLINE_POINT=$(( READLINE_POINT + ${#text} ))
+        if [[ -n "$path" ]]; then
+            READLINE_LINE="${READLINE_LINE:0:$READLINE_POINT}${path}${READLINE_LINE:$READLINE_POINT}"
+            READLINE_POINT=$(( READLINE_POINT + ${#path} ))
+            return
+        fi
     fi
+    local text
+    text="$(wl-paste -n 2>/dev/null)"
+    READLINE_LINE="${READLINE_LINE:0:$READLINE_POINT}${text}${READLINE_LINE:$READLINE_POINT}"
+    READLINE_POINT=$(( READLINE_POINT + ${#text} ))
 }
-bind -x '"\C-v": clipboard2path_paste'
+bind -x '"\ev": clipboard2path_paste'
 "#
     .to_string()
 }
@@ -49,14 +57,18 @@ bind -x '"\C-v": clipboard2path_paste'
 fn generate_zsh_hook() -> String {
     r#"clipboard2path-paste() {
     local latest_path="$XDG_RUNTIME_DIR/clipboard2path/latest-path"
-    if [[ -f "$latest_path" ]] && wl-paste --list-types 2>/dev/null | grep -q 'image/bmp'; then
-        LBUFFER+="$(cat "$latest_path")"
-    else
-        LBUFFER+="$(wl-paste -n 2>/dev/null)"
+    if [[ -f "$latest_path" ]]; then
+        local path
+        path="$(cat "$latest_path")"
+        if [[ -n "$path" ]]; then
+            LBUFFER+="$path"
+            return
+        fi
     fi
+    LBUFFER+="$(wl-paste -n 2>/dev/null)"
 }
 zle -N clipboard2path-paste
-bindkey '^V' clipboard2path-paste
+bindkey '\ev' clipboard2path-paste
 "#
     .to_string()
 }
@@ -65,7 +77,7 @@ bindkey '^V' clipboard2path-paste
 pub fn hook_install_path(shell: ShellType, home_dir: &str) -> String {
     match shell {
         ShellType::Fish => {
-            format!("{home_dir}/.config/fish/functions/fish_clipboard_paste.fish")
+            format!("{home_dir}/.config/fish/conf.d/clipboard2path.fish")
         }
         ShellType::Bash => format!("{home_dir}/.bashrc"),
         ShellType::Zsh => format!("{home_dir}/.zshrc"),
@@ -85,12 +97,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fish_hook_contains_fish_clipboard_paste() {
+    fn fish_hook_contains_clipboard2path_function() {
         let hook = generate_hook(ShellType::Fish);
-        assert!(hook.contains("function fish_clipboard_paste"));
+        assert!(hook.contains("function __clipboard2path_paste"));
         assert!(hook.contains("latest-path"));
-        assert!(hook.contains("image/bmp"));
         assert!(hook.contains("string trim"));
+        assert!(hook.contains(r#"bind \ev"#));
     }
 
     #[test]
@@ -98,7 +110,7 @@ mod tests {
         let hook = generate_hook(ShellType::Bash);
         assert!(hook.contains("clipboard2path_paste"));
         assert!(hook.contains("READLINE_LINE"));
-        assert!(hook.contains(r#"bind -x '"\C-v": clipboard2path_paste'"#));
+        assert!(hook.contains(r#"bind -x '"\ev": clipboard2path_paste'"#));
     }
 
     #[test]
@@ -106,16 +118,13 @@ mod tests {
         let hook = generate_hook(ShellType::Zsh);
         assert!(hook.contains("clipboard2path-paste"));
         assert!(hook.contains("zle -N"));
-        assert!(hook.contains("bindkey '^V'"));
+        assert!(hook.contains(r#"bindkey '\ev'"#));
     }
 
     #[test]
     fn hook_install_path_fish() {
         let path = hook_install_path(ShellType::Fish, "/home/user");
-        assert_eq!(
-            path,
-            "/home/user/.config/fish/functions/fish_clipboard_paste.fish"
-        );
+        assert_eq!(path, "/home/user/.config/fish/conf.d/clipboard2path.fish");
     }
 
     #[test]

@@ -55,8 +55,9 @@ where
         return (PollResult::NoChange, current_types);
     }
 
-    // 3. Check for BMP
+    // 3. Check for BMP — if clipboard changed to non-image, clear latest-path
     if !clipboard_change::has_bmp_image(&current_types) {
+        let _ = service.clear_notification();
         return (PollResult::NoBmpImage, current_types);
     }
 
@@ -106,6 +107,10 @@ mod tests {
 
     impl PathNotifier for MockNotifier {
         fn notify(&self, _path: &Path) -> Result<(), NotifyError> {
+            Ok(())
+        }
+
+        fn clear(&self) -> Result<(), NotifyError> {
             Ok(())
         }
     }

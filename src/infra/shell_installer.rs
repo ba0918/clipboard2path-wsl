@@ -155,6 +155,13 @@ fn uninstall_fish_hook(home: &str) -> Result<String, InstallError> {
         std::fs::remove_file(&target)
             .map_err(|e| InstallError::IoError(format!("failed to remove {target}: {e}")))?;
     }
+
+    // Also remove legacy hook (v0.2.0 installed to functions/)
+    let legacy = format!("{home}/.config/fish/functions/fish_clipboard_paste.fish");
+    if Path::new(&legacy).exists() {
+        let _ = std::fs::remove_file(&legacy);
+    }
+
     Ok(target)
 }
 

@@ -21,6 +21,8 @@ impl fmt::Display for NotifyError {
 /// Notify the saved file path via a side channel (not clipboard).
 pub trait PathNotifier {
     fn notify(&self, path: &Path) -> Result<(), NotifyError>;
+    /// Clear the latest-path notification (clipboard no longer has an image).
+    fn clear(&self) -> Result<(), NotifyError>;
 }
 
 /// Writes the path to `latest-path` file and updates `latest.png` symlink.
@@ -53,6 +55,21 @@ impl PathNotifier for FilePathNotifier {
         // Atomic symlink update: create temp symlink, then rename
         let tmp_link = self.runtime_dir.join(".latest.png.tmp");
         atomic_symlink(&tmp_link, &latest_symlink, path)?;
+
+        Ok(())
+    }
+
+    fn clear(&self) -> Result<(), NotifyError> {
+        let latest_path_file = self.runtime_dir.join("latest-path");
+        let latest_symlink = self.runtime_dir.join("latest.png");
+
+        if latest_path_file.exists() {
+            std::fs::remove_file(&latest_path_file)
+                .map_err(|e| NotifyError::IoError(format!("failed to remove latest-path: {e}")))?;
+        }
+        if latest_symlink.exists() || latest_symlink.symlink_metadata().is_ok() {
+            let _ = std::fs::remove_file(&latest_symlink);
+        }
 
         Ok(())
     }
@@ -167,6 +184,11 @@ mod tests {
     impl PathNotifier for MockPathNotifier {
         fn notify(&self, path: &Path) -> Result<(), NotifyError> {
             *self.notified.borrow_mut() = Some(path.to_path_buf());
+            Ok(())
+        }
+
+        fn clear(&self) -> Result<(), NotifyError> {
+            *self.notified.borrow_mut() = None;
             Ok(())
         }
     }
