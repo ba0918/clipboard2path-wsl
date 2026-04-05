@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use domain::cleanup::{self, FileEntry};
 use domain::cli::{self, Verbosity};
@@ -98,7 +98,8 @@ fn main() {
     }
 
     // DI assembly
-    let service = ConvertService::new(WlClipboard, WlClipboard, RealFileWriter, SystemTimestamp);
+    let notifier = infra::path_notifier::FilePathNotifier::new(base_dir.clone());
+    let service = ConvertService::new(WlClipboard, RealFileWriter, SystemTimestamp, notifier);
 
     if args.once {
         run_once(&service, &base_dir, verbosity);
@@ -122,12 +123,12 @@ fn log_verbose(verbosity: Verbosity, msg: &str) {
     }
 }
 
-fn run_once<C, W, F, T>(service: &ConvertService<C, W, F, T>, base_dir: &Path, verbosity: Verbosity)
+fn run_once<C, F, T, N>(service: &ConvertService<C, F, T, N>, base_dir: &Path, verbosity: Verbosity)
 where
     C: infra::clipboard::ClipboardReader,
-    W: infra::clipboard::ClipboardWriter,
     F: infra::file_system::FileWriter,
     T: service::converter::TimestampProvider,
+    N: infra::path_notifier::PathNotifier,
 {
     match service.convert_once(base_dir) {
         Ok(path) => {
@@ -182,23 +183,20 @@ fn run_cleanup(base_dir: &Path, max_files: usize, verbosity: Verbosity) {
     }
 }
 
-fn run_daemon<C, W, F, T>(
-    service: &ConvertService<C, W, F, T>,
+fn run_daemon<C, F, T, N>(
+    service: &ConvertService<C, F, T, N>,
     base_dir: &Path,
     interval_ms: u64,
     verbosity: Verbosity,
 ) where
     C: infra::clipboard::ClipboardReader,
-    W: infra::clipboard::ClipboardWriter,
     F: infra::file_system::FileWriter,
     T: service::converter::TimestampProvider,
+    N: infra::path_notifier::PathNotifier,
 {
-    let debounce_ms: u64 = 1000;
     let poll_interval = Duration::from_millis(interval_ms);
-    let epoch = Instant::now();
 
     let mut previous_types: Vec<String> = Vec::new();
-    let mut last_write_ms: Option<u64> = None;
 
     log_info(
         verbosity,
@@ -209,22 +207,12 @@ fn run_daemon<C, W, F, T>(
     );
 
     loop {
-        let current_ms = epoch.elapsed().as_millis() as u64;
-
-        let (result, new_types) = daemon::poll_once(
-            service,
-            &previous_types,
-            last_write_ms,
-            current_ms,
-            debounce_ms,
-            base_dir,
-        );
+        let (result, new_types) = daemon::poll_once(service, &previous_types, base_dir);
 
         previous_types = new_types;
 
         match result {
             PollResult::Converted(path) => {
-                last_write_ms = Some(epoch.elapsed().as_millis() as u64);
                 log_info(verbosity, &format!("saved: {}", path.display()));
             }
             PollResult::ConvertError(e) => {
@@ -237,9 +225,6 @@ fn run_daemon<C, W, F, T>(
                 log_verbose(verbosity, "skipped: no BMP image in clipboard");
             }
             PollResult::NoChange => {}
-            PollResult::Debounced => {
-                log_verbose(verbosity, "skipped: debounced");
-            }
         }
 
         thread::sleep(poll_interval);

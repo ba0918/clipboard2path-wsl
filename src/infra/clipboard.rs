@@ -36,12 +36,7 @@ pub trait ClipboardReader {
     fn list_types(&self) -> Result<Vec<String>, ClipboardError>;
 }
 
-/// Write text to the clipboard.
-pub trait ClipboardWriter {
-    fn write_text(&self, text: &str) -> Result<(), ClipboardError>;
-}
-
-/// Implementation using wl-paste / wl-copy (Wayland clipboard tools).
+/// Implementation using wl-paste (Wayland clipboard tool, read-only).
 pub struct WlClipboard;
 
 impl ClipboardReader for WlClipboard {
@@ -97,42 +92,6 @@ impl ClipboardReader for WlClipboard {
     }
 }
 
-impl ClipboardWriter for WlClipboard {
-    fn write_text(&self, text: &str) -> Result<(), ClipboardError> {
-        use std::io::Write;
-
-        let mut child = Command::new("wl-copy")
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    ClipboardError::ToolNotFound("wl-copy".to_string())
-                } else {
-                    ClipboardError::SpawnFailed(e.to_string())
-                }
-            })?;
-
-        if let Some(ref mut stdin) = child.stdin {
-            stdin
-                .write_all(text.as_bytes())
-                .map_err(|e| ClipboardError::SpawnFailed(e.to_string()))?;
-        }
-
-        let status = child
-            .wait()
-            .map_err(|e| ClipboardError::SpawnFailed(e.to_string()))?;
-
-        if !status.success() {
-            return Err(ClipboardError::CommandFailed {
-                tool: "wl-copy".to_string(),
-                stderr: "non-zero exit code".to_string(),
-            });
-        }
-
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,17 +119,6 @@ mod tests {
         }
     }
 
-    struct MockWriter {
-        written: std::cell::RefCell<Option<String>>,
-    }
-
-    impl ClipboardWriter for MockWriter {
-        fn write_text(&self, text: &str) -> Result<(), ClipboardError> {
-            *self.written.borrow_mut() = Some(text.to_string());
-            Ok(())
-        }
-    }
-
     #[test]
     fn mock_reader_returns_data() {
         let reader = MockReader {
@@ -189,12 +137,4 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn mock_writer_stores_text() {
-        let writer = MockWriter {
-            written: std::cell::RefCell::new(None),
-        };
-        writer.write_text("/tmp/test.png").unwrap();
-        assert_eq!(*writer.written.borrow(), Some("/tmp/test.png".to_string()));
-    }
 }

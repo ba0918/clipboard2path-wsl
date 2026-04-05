@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::image_convert::{self, ConvertError};
 use crate::domain::path_gen::{self, PathError};
-use crate::infra::clipboard::{ClipboardError, ClipboardReader, ClipboardWriter};
+use crate::infra::clipboard::{ClipboardError, ClipboardReader};
 use crate::infra::file_system::{FileWriter, FsError};
+use crate::infra::path_notifier::{NotifyError, PathNotifier};
 
 /// Unified application error type.
 #[derive(Debug)]
@@ -13,6 +14,7 @@ pub enum AppError {
     Convert(ConvertError),
     Path(PathError),
     Fs(FsError),
+    Notify(NotifyError),
 }
 
 impl fmt::Display for AppError {
@@ -22,6 +24,7 @@ impl fmt::Display for AppError {
             AppError::Convert(e) => write!(f, "conversion error: {e}"),
             AppError::Path(e) => write!(f, "path error: {e}"),
             AppError::Fs(e) => write!(f, "file system error: {e}"),
+            AppError::Notify(e) => write!(f, "notify error: {e}"),
         }
     }
 }
@@ -50,6 +53,12 @@ impl From<FsError> for AppError {
     }
 }
 
+impl From<NotifyError> for AppError {
+    fn from(e: NotifyError) -> Self {
+        AppError::Notify(e)
+    }
+}
+
 /// Timestamp provider trait for dependency injection.
 pub trait TimestampProvider {
     fn now(&self) -> String;
@@ -71,32 +80,32 @@ impl TimestampProvider for SystemTimestamp {
 /// Orchestrates the clipboard-to-file conversion workflow.
 ///
 /// Contains zero business logic — delegates to domain functions and infra traits.
-pub struct ConvertService<C, W, F, T>
+pub struct ConvertService<C, F, T, N>
 where
     C: ClipboardReader,
-    W: ClipboardWriter,
     F: FileWriter,
     T: TimestampProvider,
+    N: PathNotifier,
 {
     clipboard_reader: C,
-    clipboard_writer: W,
     file_writer: F,
     timestamp: T,
+    path_notifier: N,
 }
 
-impl<C, W, F, T> ConvertService<C, W, F, T>
+impl<C, F, T, N> ConvertService<C, F, T, N>
 where
     C: ClipboardReader,
-    W: ClipboardWriter,
     F: FileWriter,
     T: TimestampProvider,
+    N: PathNotifier,
 {
-    pub fn new(clipboard_reader: C, clipboard_writer: W, file_writer: F, timestamp: T) -> Self {
+    pub fn new(clipboard_reader: C, file_writer: F, timestamp: T, path_notifier: N) -> Self {
         Self {
             clipboard_reader,
-            clipboard_writer,
             file_writer,
             timestamp,
+            path_notifier,
         }
     }
 
@@ -106,7 +115,7 @@ where
     }
 
     /// Execute a single conversion: read BMP from clipboard, convert to PNG,
-    /// save to file, write path back to clipboard.
+    /// save to file, notify path via file.
     pub fn convert_once(&self, base_dir: &Path) -> Result<PathBuf, AppError> {
         // 1. Read BMP from clipboard
         let bmp_data = self.clipboard_reader.read_image_bmp()?;
@@ -121,9 +130,8 @@ where
         // 4. Write PNG to file (infra)
         self.file_writer.write_bytes(&save_path, &png_data)?;
 
-        // 5. Write path to clipboard (infra)
-        let path_str = save_path.to_string_lossy();
-        self.clipboard_writer.write_text(&path_str)?;
+        // 5. Notify path via file (infra)
+        self.path_notifier.notify(&save_path)?;
 
         Ok(save_path)
     }
@@ -132,6 +140,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infra::path_notifier::NotifyError;
     use std::cell::RefCell;
     use std::io::Cursor;
     use std::path::PathBuf;
@@ -167,21 +176,21 @@ mod tests {
         }
     }
 
-    struct MockClipboardWriter {
-        written: RefCell<Option<String>>,
+    struct MockPathNotifier {
+        notified: RefCell<Option<PathBuf>>,
     }
 
-    impl MockClipboardWriter {
+    impl MockPathNotifier {
         fn new() -> Self {
             Self {
-                written: RefCell::new(None),
+                notified: RefCell::new(None),
             }
         }
     }
 
-    impl ClipboardWriter for MockClipboardWriter {
-        fn write_text(&self, text: &str) -> Result<(), ClipboardError> {
-            *self.written.borrow_mut() = Some(text.to_string());
+    impl PathNotifier for MockPathNotifier {
+        fn notify(&self, path: &Path) -> Result<(), NotifyError> {
+            *self.notified.borrow_mut() = Some(path.to_path_buf());
             Ok(())
         }
     }
@@ -232,11 +241,11 @@ mod tests {
     fn convert_once_full_flow() {
         let bmp = make_1x1_bmp();
         let reader = MockClipboardReader { data: bmp };
-        let writer = MockClipboardWriter::new();
         let file_writer = MockFileWriter::new();
         let timestamp = FixedTimestamp("20260406-120000".to_string());
+        let notifier = MockPathNotifier::new();
 
-        let service = ConvertService::new(reader, writer, file_writer, timestamp);
+        let service = ConvertService::new(reader, file_writer, timestamp, notifier);
         let result = service.convert_once(Path::new("/tmp"));
 
         assert!(result.is_ok());
@@ -248,43 +257,45 @@ mod tests {
     fn convert_once_writes_png_to_file() {
         let bmp = make_1x1_bmp();
         let reader = MockClipboardReader { data: bmp };
-        let writer = MockClipboardWriter::new();
         let file_writer = MockFileWriter::new();
         let timestamp = FixedTimestamp("12345".to_string());
+        let notifier = MockPathNotifier::new();
 
-        let service = ConvertService::new(reader, writer, file_writer, timestamp);
+        let service = ConvertService::new(reader, file_writer, timestamp, notifier);
         service.convert_once(Path::new("/tmp")).unwrap();
 
-        let svc_ref = &service;
-        let writes = svc_ref.file_writer.written.borrow();
+        let writes = service.file_writer.written.borrow();
         assert_eq!(writes.len(), 1);
         // Verify it wrote PNG data (magic bytes)
         assert_eq!(&writes[0].1[..4], &[0x89, b'P', b'N', b'G']);
     }
 
     #[test]
-    fn convert_once_writes_path_to_clipboard() {
+    fn convert_once_notifies_path() {
         let bmp = make_1x1_bmp();
         let reader = MockClipboardReader { data: bmp };
-        let writer = MockClipboardWriter::new();
         let file_writer = MockFileWriter::new();
         let timestamp = FixedTimestamp("99999".to_string());
+        let notifier = MockPathNotifier::new();
 
-        let service = ConvertService::new(reader, writer, file_writer, timestamp);
+        let service = ConvertService::new(reader, file_writer, timestamp, notifier);
         service.convert_once(Path::new("/tmp")).unwrap();
 
-        let clipboard_text = service.clipboard_writer.written.borrow().clone();
-        assert_eq!(clipboard_text, Some("/tmp/clipboard-99999.png".to_string()));
+        let notified = service.path_notifier.notified.borrow().clone();
+        assert_eq!(
+            notified,
+            Some(PathBuf::from("/tmp/clipboard-99999.png"))
+        );
     }
 
     #[test]
     fn convert_once_clipboard_error_propagates() {
         let reader = FailingClipboardReader;
-        let writer = MockClipboardWriter::new();
         let file_writer = MockFileWriter::new();
         let timestamp = FixedTimestamp("0".to_string());
+        let notifier = MockPathNotifier::new();
 
-        let service = ConvertService::new(reader, writer, file_writer, timestamp);
+        let service = ConvertService::new(reader, file_writer, timestamp, notifier);
         let result = service.convert_once(Path::new("/tmp"));
 
         assert!(result.is_err());
@@ -296,11 +307,11 @@ mod tests {
         let reader = MockClipboardReader {
             data: vec![0xFF, 0xFE],
         };
-        let writer = MockClipboardWriter::new();
         let file_writer = MockFileWriter::new();
         let timestamp = FixedTimestamp("0".to_string());
+        let notifier = MockPathNotifier::new();
 
-        let service = ConvertService::new(reader, writer, file_writer, timestamp);
+        let service = ConvertService::new(reader, file_writer, timestamp, notifier);
         let result = service.convert_once(Path::new("/tmp"));
 
         assert!(result.is_err());

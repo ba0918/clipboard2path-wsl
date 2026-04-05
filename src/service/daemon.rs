@@ -1,8 +1,9 @@
 use std::path::Path;
 
-use crate::domain::{clipboard_change, debounce};
-use crate::infra::clipboard::{ClipboardReader, ClipboardWriter};
+use crate::domain::clipboard_change;
+use crate::infra::clipboard::ClipboardReader;
 use crate::infra::file_system::FileWriter;
+use crate::infra::path_notifier::PathNotifier;
 use crate::service::converter::{ConvertService, TimestampProvider};
 
 /// Result of a single poll iteration.
@@ -14,8 +15,6 @@ pub enum PollResult {
     NoBmpImage,
     /// Clipboard unchanged — no action taken.
     NoChange,
-    /// Within debounce window — skipped.
-    Debounced,
     /// Conversion failed.
     ConvertError(String),
     /// Clipboard read error.
@@ -26,26 +25,21 @@ pub enum PollResult {
 ///
 /// This is the core logic extracted as a testable function.
 /// The daemon loop calls this repeatedly.
-pub fn poll_once<C, W, F, T>(
-    service: &ConvertService<C, W, F, T>,
+///
+/// No debounce needed — we no longer write to the clipboard,
+/// so self-triggering cannot occur.
+pub fn poll_once<C, F, T, N>(
+    service: &ConvertService<C, F, T, N>,
     previous_types: &[String],
-    last_write_ms: Option<u64>,
-    current_ms: u64,
-    debounce_ms: u64,
     base_dir: &Path,
 ) -> (PollResult, Vec<String>)
 where
     C: ClipboardReader,
-    W: ClipboardWriter,
     F: FileWriter,
     T: TimestampProvider,
+    N: PathNotifier,
 {
-    // 1. Check debounce
-    if !debounce::should_process_event(last_write_ms, current_ms, debounce_ms) {
-        return (PollResult::Debounced, previous_types.to_vec());
-    }
-
-    // 2. List current types
+    // 1. List current types
     let current_types = match service.reader().list_types() {
         Ok(types) => types,
         Err(e) => {
@@ -56,17 +50,17 @@ where
         }
     };
 
-    // 3. Check for change
+    // 2. Check for change
     if !clipboard_change::has_clipboard_changed(previous_types, &current_types) {
         return (PollResult::NoChange, current_types);
     }
 
-    // 4. Check for BMP
+    // 3. Check for BMP
     if !clipboard_change::has_bmp_image(&current_types) {
         return (PollResult::NoBmpImage, current_types);
     }
 
-    // 5. Convert
+    // 4. Convert
     match service.convert_once(base_dir) {
         Ok(path) => (PollResult::Converted(path), current_types),
         Err(e) => (PollResult::ConvertError(e.to_string()), current_types),
@@ -76,10 +70,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infra::clipboard::{ClipboardError as CErr, ClipboardReader, ClipboardWriter};
+    use crate::infra::clipboard::ClipboardError as CErr;
     use crate::infra::file_system::{FileWriter, FsError};
+    use crate::infra::path_notifier::{NotifyError, PathNotifier};
     use crate::service::converter::ConvertService;
-    use std::cell::RefCell;
     use std::io::Cursor;
     use std::path::Path;
 
@@ -100,29 +94,18 @@ mod tests {
         }
     }
 
-    struct MockWriter {
-        written: RefCell<Option<String>>,
-    }
-
-    impl MockWriter {
-        fn new() -> Self {
-            Self {
-                written: RefCell::new(None),
-            }
-        }
-    }
-
-    impl ClipboardWriter for MockWriter {
-        fn write_text(&self, text: &str) -> Result<(), CErr> {
-            *self.written.borrow_mut() = Some(text.to_string());
-            Ok(())
-        }
-    }
-
     struct MockFileWriter;
 
     impl FileWriter for MockFileWriter {
         fn write_bytes(&self, _path: &Path, _data: &[u8]) -> Result<(), FsError> {
+            Ok(())
+        }
+    }
+
+    struct MockNotifier;
+
+    impl PathNotifier for MockNotifier {
+        fn notify(&self, _path: &Path) -> Result<(), NotifyError> {
             Ok(())
         }
     }
@@ -153,17 +136,14 @@ mod tests {
                 types: vec!["image/bmp".to_string()],
                 bmp_data: bmp,
             },
-            MockWriter::new(),
             MockFileWriter,
             FixedTimestamp("1".into()),
+            MockNotifier,
         );
 
         let (result, _) = poll_once(
             &service,
-            &[],  // previous: empty (change detected)
-            None, // no last write
-            1000, // current ms
-            500,  // debounce
+            &[], // previous: empty (change detected)
             Path::new("/tmp"),
         );
 
@@ -177,46 +157,19 @@ mod tests {
                 types: vec!["image/bmp".to_string()],
                 bmp_data: vec![],
             },
-            MockWriter::new(),
             MockFileWriter,
             FixedTimestamp("1".into()),
+            MockNotifier,
         );
 
         let prev = vec!["image/bmp".to_string()];
         let (result, _) = poll_once(
             &service,
             &prev, // same as current
-            None,
-            1000,
-            500,
             Path::new("/tmp"),
         );
 
         assert_eq!(result, PollResult::NoChange);
-    }
-
-    #[test]
-    fn poll_once_skips_when_debounced() {
-        let service = ConvertService::new(
-            MockReader {
-                types: vec!["image/bmp".to_string()],
-                bmp_data: vec![],
-            },
-            MockWriter::new(),
-            MockFileWriter,
-            FixedTimestamp("1".into()),
-        );
-
-        let (result, _) = poll_once(
-            &service,
-            &[],
-            Some(900), // wrote at 900ms
-            1000,      // current 1000ms — only 100ms elapsed
-            500,       // debounce 500ms
-            Path::new("/tmp"),
-        );
-
-        assert_eq!(result, PollResult::Debounced);
     }
 
     #[test]
@@ -226,17 +179,14 @@ mod tests {
                 types: vec!["text/plain".to_string()],
                 bmp_data: vec![],
             },
-            MockWriter::new(),
             MockFileWriter,
             FixedTimestamp("1".into()),
+            MockNotifier,
         );
 
         let (result, _) = poll_once(
             &service,
             &[], // empty previous -> change detected
-            None,
-            1000,
-            500,
             Path::new("/tmp"),
         );
 
