@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  BINARY_NAME: clipboard2path-wsl
+
+jobs:
+  build:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Format check
+        run: cargo fmt -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets
+
+      - name: Test
+        run: cargo test
+
+      - name: Release build
+        run: cargo build --release
+
+      - name: Binary size check
+        run: |
+          size=$(stat -c%s target/release/${{ env.BINARY_NAME }})
+          echo "Binary size: ${size} bytes ($((size / 1024)) KB)"
+          if [ "$size" -gt 1048576 ]; then
+            echo "::error::Binary size ${size} exceeds 1MB limit"
+            exit 1
+          fi
+
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          cp target/release/${{ env.BINARY_NAME }} dist/
+          cd dist
+          tar czf ${{ env.BINARY_NAME }}-${GITHUB_REF_NAME}-x86_64-linux.tar.gz ${{ env.BINARY_NAME }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: false
+          files: dist/${{ env.BINARY_NAME }}-${{ github.ref_name }}-x86_64-linux.tar.gz
