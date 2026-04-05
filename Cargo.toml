@@ -1,0 +1,12 @@
+[package]
+name = "clipboard2path-wsl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["bmp", "png"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
