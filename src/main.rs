@@ -8,7 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use domain::cleanup::{self, FileEntry};
-use domain::cli;
+use domain::cli::{self, Verbosity};
 use domain::wsl_detect;
 use infra::clipboard::WlClipboard;
 use infra::file_system::RealFileWriter;
@@ -35,6 +35,8 @@ fn main() {
         println!("{}", cli::version_text());
         return;
     }
+
+    let verbosity = args.verbosity;
 
     // WSL2 check
     let proc_version = match std::fs::read_to_string("/proc/version") {
@@ -63,16 +65,28 @@ fn main() {
     let service = ConvertService::new(WlClipboard, WlClipboard, RealFileWriter, SystemTimestamp);
 
     if args.once {
-        // Single-shot mode
-        run_once(&service, &base_dir);
+        run_once(&service, &base_dir, verbosity);
     } else {
-        // Daemon mode: cleanup old files, then poll
-        run_cleanup(&base_dir, args.max_files);
-        run_daemon(&service, &base_dir, args.interval_ms);
+        run_cleanup(&base_dir, args.max_files, verbosity);
+        run_daemon(&service, &base_dir, args.interval_ms, verbosity);
     }
 }
 
-fn run_once<C, W, F, T>(service: &ConvertService<C, W, F, T>, base_dir: &Path)
+/// Log a message at Normal+ verbosity.
+fn log_info(verbosity: Verbosity, msg: &str) {
+    if verbosity != Verbosity::Quiet {
+        eprintln!("{msg}");
+    }
+}
+
+/// Log a message at Verbose verbosity only.
+fn log_verbose(verbosity: Verbosity, msg: &str) {
+    if verbosity == Verbosity::Verbose {
+        eprintln!("{msg}");
+    }
+}
+
+fn run_once<C, W, F, T>(service: &ConvertService<C, W, F, T>, base_dir: &Path, verbosity: Verbosity)
 where
     C: infra::clipboard::ClipboardReader,
     W: infra::clipboard::ClipboardWriter,
@@ -81,7 +95,7 @@ where
 {
     match service.convert_once(base_dir) {
         Ok(path) => {
-            eprintln!("saved: {}", path.display());
+            log_info(verbosity, &format!("saved: {}", path.display()));
         }
         Err(e) => {
             eprintln!("error: {e}");
@@ -90,7 +104,7 @@ where
     }
 }
 
-fn run_cleanup(base_dir: &Path, max_files: usize) {
+fn run_cleanup(base_dir: &Path, max_files: usize, verbosity: Verbosity) {
     let max_age = Duration::from_secs(86400); // 24 hours
 
     // Collect file entries
@@ -119,7 +133,7 @@ fn run_cleanup(base_dir: &Path, max_files: usize) {
     // Clean by age
     for path in cleanup::files_to_clean_by_age(&entries, max_age) {
         let _ = std::fs::remove_file(&path);
-        eprintln!("cleanup: removed {}", path.display());
+        log_verbose(verbosity, &format!("cleanup: removed {}", path.display()));
     }
 
     // Re-collect remaining entries for count-based cleanup
@@ -128,12 +142,16 @@ fn run_cleanup(base_dir: &Path, max_files: usize) {
 
     for path in cleanup::files_to_clean_by_count(&remaining, max_files) {
         let _ = std::fs::remove_file(&path);
-        eprintln!("cleanup: removed {}", path.display());
+        log_verbose(verbosity, &format!("cleanup: removed {}", path.display()));
     }
 }
 
-fn run_daemon<C, W, F, T>(service: &ConvertService<C, W, F, T>, base_dir: &Path, interval_ms: u64)
-where
+fn run_daemon<C, W, F, T>(
+    service: &ConvertService<C, W, F, T>,
+    base_dir: &Path,
+    interval_ms: u64,
+    verbosity: Verbosity,
+) where
     C: infra::clipboard::ClipboardReader,
     W: infra::clipboard::ClipboardWriter,
     F: infra::file_system::FileWriter,
@@ -146,9 +164,12 @@ where
     let mut previous_types: Vec<String> = Vec::new();
     let mut last_write_ms: Option<u64> = None;
 
-    eprintln!(
-        "daemon: watching clipboard (interval: {interval_ms}ms, output: {})",
-        base_dir.display()
+    log_info(
+        verbosity,
+        &format!(
+            "daemon: watching clipboard (interval: {interval_ms}ms, output: {})",
+            base_dir.display()
+        ),
     );
 
     loop {
@@ -168,7 +189,7 @@ where
         match result {
             PollResult::Converted(path) => {
                 last_write_ms = Some(epoch.elapsed().as_millis() as u64);
-                eprintln!("saved: {}", path.display());
+                log_info(verbosity, &format!("saved: {}", path.display()));
             }
             PollResult::ConvertError(e) => {
                 eprintln!("error: {e}");
@@ -176,8 +197,12 @@ where
             PollResult::ClipboardError(e) => {
                 eprintln!("clipboard error: {e}");
             }
-            PollResult::NoBmpImage | PollResult::NoChange | PollResult::Debounced => {
-                // Silent — no action needed
+            PollResult::NoBmpImage => {
+                log_verbose(verbosity, "skipped: no BMP image in clipboard");
+            }
+            PollResult::NoChange => {}
+            PollResult::Debounced => {
+                log_verbose(verbosity, "skipped: debounced");
             }
         }
 

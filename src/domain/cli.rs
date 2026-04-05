@@ -5,6 +5,14 @@ use std::path::PathBuf;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Verbosity level.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Verbosity {
+    Quiet,
+    Normal,
+    Verbose,
+}
+
 /// Parsed CLI arguments.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CliArgs {
@@ -16,6 +24,8 @@ pub struct CliArgs {
     pub output_dir: PathBuf,
     /// Maximum number of files to keep.
     pub max_files: usize,
+    /// Verbosity level.
+    pub verbosity: Verbosity,
     /// Show help.
     pub help: bool,
     /// Show version.
@@ -29,6 +39,7 @@ impl Default for CliArgs {
             interval_ms: 500,
             output_dir: PathBuf::from("/tmp"),
             max_files: 100,
+            verbosity: Verbosity::Normal,
             help: false,
             version: false,
         }
@@ -95,6 +106,8 @@ pub fn parse_args(args: &[String]) -> Result<CliArgs, CliError> {
                     value: val.clone(),
                 })?;
             }
+            "--verbose" => result.verbosity = Verbosity::Verbose,
+            "--quiet" | "-q" => result.verbosity = Verbosity::Quiet,
             other => return Err(CliError::UnknownFlag(other.to_string())),
         }
         i += 1;
@@ -117,6 +130,8 @@ OPTIONS:
     --interval <ms>     Polling interval in ms (default: 500)
     --output-dir <path> Output directory (default: /tmp)
     --max-files <n>     Maximum files to keep (default: 100)
+    --verbose           Show detailed output
+    -q, --quiet         Suppress all non-error output
     -h, --help          Show this help
     -v, --version       Show version"
     )
@@ -208,6 +223,18 @@ mod tests {
                 value: "abc".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn verbose_flag() {
+        let result = parse_args(&args(&["--verbose"])).unwrap();
+        assert_eq!(result.verbosity, Verbosity::Verbose);
+    }
+
+    #[test]
+    fn quiet_flag() {
+        let result = parse_args(&args(&["-q"])).unwrap();
+        assert_eq!(result.verbosity, Verbosity::Quiet);
     }
 
     #[test]
