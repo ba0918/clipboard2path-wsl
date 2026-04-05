@@ -37,8 +37,8 @@ impl Default for CliArgs {
         Self {
             once: false,
             interval_ms: 500,
-            output_dir: PathBuf::from("/tmp"),
-            max_files: 100,
+            output_dir: PathBuf::from(""), // empty = use $XDG_RUNTIME_DIR/clipboard2path/
+            max_files: 20,
             verbosity: Verbosity::Normal,
             help: false,
             version: false,
@@ -128,8 +128,8 @@ USAGE:
 OPTIONS:
     --once              Run once and exit (no daemon loop)
     --interval <ms>     Polling interval in ms (default: 500)
-    --output-dir <path> Output directory (default: /tmp)
-    --max-files <n>     Maximum files to keep (default: 100)
+    --output-dir <path> Output directory (default: $XDG_RUNTIME_DIR/clipboard2path/)
+    --max-files <n>     Maximum files to keep (default: 20)
     --verbose           Show detailed output
     -q, --quiet         Suppress all non-error output
     -h, --help          Show this help
@@ -155,8 +155,8 @@ mod tests {
         let result = parse_args(&[]).unwrap();
         assert!(!result.once);
         assert_eq!(result.interval_ms, 500);
-        assert_eq!(result.output_dir, PathBuf::from("/tmp"));
-        assert_eq!(result.max_files, 100);
+        assert_eq!(result.output_dir, PathBuf::from("")); // empty = use runtime dir
+        assert_eq!(result.max_files, 20);
     }
 
     #[test]
