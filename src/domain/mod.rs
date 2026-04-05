@@ -4,4 +4,6 @@ pub mod clipboard_change;
 pub mod image_convert;
 pub mod path_gen;
 pub mod runtime_dir;
+pub mod shell_detect;
+pub mod shell_hook;
 pub mod wsl_detect;
