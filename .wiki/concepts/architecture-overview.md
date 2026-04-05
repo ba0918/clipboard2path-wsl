@@ -6,28 +6,26 @@ source_refs:
 created: 2026-04-06
 updated: 2026-04-06
 category: architecture
-tags: [architecture, rust, di, pure-functions, layers, testing]
+tags: [architecture, rust, di, pure-functions, layers, v2, path-notifier]
 related:
   - "[[なぜ clipboard2path-wsl が必要なのか]]"
   - "[[WSL2 クリップボード連携の技術詳細]]"
 ---
 
-# アーキテクチャ概要
+# アーキテクチャ概要��v2）
 
 ## 概要
 
-clipboard2path-wsl は **テスタビリティ最優先** の3層アーキテクチャで構成される。ドメインロジックは全て純粋関数、外部依存はトレイトで抽象化し DI 可能、上位層はビジネスロジックゼロで呼び出しのみ。
-
-**v2 の最大の変更点**: クリップボードは読み取り専用。パス通知はファイル経由 + シェルフック。
+clipboard2path-wsl は **テスタビリティ最優先** の3層アーキテクチャ。v2 ではクリップボードを読み取り専用とし、パス通知をファイル経由に変更。90 テスト、全て純粋関数またはモック注入で検証。
 
 ## レイヤー構成
 
 ```
 ┌─────────────────────────────────────────┐
-│  main.rs -- DI Assembly + Routing       │  エントリポイント
+│  main.rs — DI Assembly + Routing        │
 │  (サブコマンド分岐 + 実装の組み立て)       │
 ├─────────────────────────────────────────┤
-│  Service Layer -- Orchestration         │  フロー制御
+│  Service Layer — Orchestration          │
 │  ├── converter.rs  変換パイプライン       │
 │  └── daemon.rs     ポーリングループ       │
 ├──────────────────┬──────────────────────┤
@@ -47,61 +45,67 @@ clipboard2path-wsl は **テスタビリティ最優先** の3層アーキテク
 
 **依存の方向は上から下のみ。** ドメイン層はインフラ層に依存しない。
 
+## v1 → v2 変更サマリー
+
+| 項目 | v1 | v2 |
+|------|-----|-----|
+| クリップボード | 読み書き（wl-paste + wl-copy） | **読み取り専用** |
+| パス通知 | `ClipboardWriter` | **`PathNotifier`**（latest-path + symlink） |
+| 保存先 | `/tmp/` | **`$XDG_RUNTIME_DIR/clipboard2path/`** |
+| 自己トリガー防止 | `debounce.rs` | **削除**（書き換えないので不要） |
+| ���ーテーション | 100件 + 24時間 | **20件**（件数ベースのみ） |
+| CLI構造 | フラット | **サブコマンド**（Watch/Init/Uninstall） |
+| シェル統合 | なし | **fish/bash/zsh フック** |
+| ライフサイクル | なし | **setup/teardown**（SIGTERM対応） |
+| テスト | 63 | **90** |
+| バイナリ | 593KB | **670KB** |
+
 ## ドメイン層
 
-全て `fn(input) -> output` 形式の純粋関数。外部状態の読み書きなし。
+全て `fn(input) -> output` 形式の純粋関数。
 
-| モジュール | 関数 | 役割 |
-|-----------|------|------|
-| `image_convert` | `convert_bmp_to_png(&[u8]) -> Result<Vec<u8>>` | BMP->PNG変換 |
-| `path_gen` | `generate_save_path(&Path, &str) -> Result<PathBuf>` | 保存パス生成 |
-| `path_gen` | `validate_output_dir(&Path) -> Result<PathBuf>` | パストラバーサル防止 |
-| `wsl_detect` | `is_wsl2(&str) -> bool` | WSL2環境判定 |
-| `runtime_dir` | `resolve_runtime_dir(Option<&str>) -> Result<PathBuf>` | XDGランタイムディレクトリ解決 |
-| `clipboard_change` | `has_clipboard_changed(&[String], &[String]) -> bool` | 変更検知 |
-| `clipboard_change` | `has_bmp_image(&[String]) -> bool` | BMP存在チェック |
-| `cleanup` | `files_to_clean_by_count(...)` | 件数ベース一時ファイル管理 |
-| `cli` | `parse_args(&[String]) -> Result<Command>` | CLI引数パース（サブコマンド対応） |
-| `shell_detect` | `detect_shell(&str) -> Result<ShellType>` | シェル検出 |
-| `shell_hook` | `generate_hook(ShellType) -> String` | シェルフック生成 |
+| モジュール | 主要関数 | 役割 |
+|-----------|---------|------|
+| `image_convert` | `convert_bmp_to_png(&[u8])` | BMP→PNG変換 |
+| `path_gen` | `generate_save_path`, `validate_output_dir` | パス生成 + トラバーサル防止 |
+| `wsl_detect` | `is_wsl2(&str)` | WSL2環境判定 |
+| `runtime_dir` | `resolve_runtime_dir(Option<&str>)` | XDG ランタイムディレクトリ解決 |
+| `clipboard_change` | `has_clipboard_changed`, `has_bmp_image` | 変更検知 |
+| `cleanup` | `files_to_clean_by_count` | 件数ベースローテーション |
+| `cli` | `parse_args(&[String])` | サブコマンドパース |
+| `shell_detect` | `detect_shell(&str)` | シェル検出 |
+| `shell_hook` | `generate_hook(ShellType)` | フックスクリプト生成 |
 
 ## インフラ層
 
-トレイトで抽象化し、テスト時はモック差し替え：
-
 ```rust
+// 読み取り専用（v2 で ClipboardWriter を削除）
 pub trait ClipboardReader {
     fn read_image_bmp(&self) -> Result<Vec<u8>, ClipboardError>;
     fn list_types(&self) -> Result<Vec<String>, ClipboardError>;
 }
 
+// v2 新設: ファイル経由パス通知
 pub trait PathNotifier {
     fn notify(&self, path: &Path) -> Result<(), NotifyError>;
 }
 
-pub trait FileWriter {
-    fn write_bytes(&self, path: &Path, data: &[u8]) -> Result<(), FsError>;
-}
-
+// v2 新設: デーモンライフサイクル
 pub trait DaemonLifecycle {
     fn setup(&self, dir: &Path) -> Result<(), LifecycleError>;
     fn teardown(&self, dir: &Path) -> Result<(), LifecycleError>;
 }
+
+pub trait FileWriter { ... }
 ```
 
-**v2 で削除**: `ClipboardWriter` (wl-copy 依存を完全除去)
-**v2 で追加**: `PathNotifier`, `DaemonLifecycle`, `ShellInstaller`
-
-**セキュリティ対策**:
-- `Command::arg()` 直接渡し（シェルインジェクション防止）
+**セキュリティ**:
 - ファイルパーミッション `0o600`、ディレクトリ `0o700`
-- アトミック書き込み（temp file -> rename）
+- [[WSL2 クリップボード連携の技術詳細|アトミック書き込み]]（temp → rename）
 
 ## サービス層
 
 ### ConvertService
-
-ジェネリクスで全依存を注入：
 
 ```rust
 pub struct ConvertService<C, F, T, N>
@@ -109,34 +113,28 @@ where C: ClipboardReader, F: FileWriter,
       T: TimestampProvider, N: PathNotifier
 ```
 
-`convert_once()` が変換パイプラインを制御（BMP読取 -> PNG変換 -> 保存 -> パス通知）。ビジネスロジックゼロ。
+変換パイプライン: BMP読取 → PNG変換 → ファイル保存 → **パス通知**
 
 ### daemon::poll_once
 
-ポーリングの1イテレーションを関数化：
-
 ```
-型リスト取得 -> 変更検知 -> BMP確認 -> 変換
+型リスト取得 → 変更検知 → BMP確認 → 変換
 ```
 
-v2 ではデバウンスチェックを削除（クリップボード書き換えしないため自己トリガーが発生しない）。
+デバウンスチェック不要（v2 ではクリップボード書き換えしない）。
 
 ## main.rs
 
-DI コンテナの組み立てとサブコマンドルーティング：
-
 ```rust
 let notifier = FilePathNotifier::new(base_dir.clone());
-let service = ConvertService::new(
-    WlClipboard, RealFileWriter, SystemTimestamp, notifier
-);
+let service = ConvertService::new(WlClipboard, RealFileWriter, SystemTimestamp, notifier);
 ```
 
-サブコマンド: `Watch`（デフォルト）、`Init`、`Uninstall`、`Help`、`Version`
+サ���コマンド: `Watch`（デフォルト）、`Init`、`Uninstall`、`Help`、`Version`
 
 ## テスト戦略
 
-**90 テスト**、全てユニットテスト。外部コマンド依存はインフラ層に閉じ込めてあるため CI でも全テスト動作。
+**90 テスト**。全てユニットテスト。外部コマンド依存はインフラ層に閉じ込め CI 動作可能。
 
 ## バイナリ最適化
 
@@ -149,9 +147,9 @@ codegen-units = 1  # 単一生成ユニット
 panic = "abort"    # unwinding 削減
 ```
 
-`image` crate は `features = ["bmp", "png"]` のみ。リリースバイナリ約 670KB。
+`image` crate `features = ["bmp", "png"]` のみ + `ctrlc` crate。約 670KB。
 
 ## 関連項目
 
-- [[なぜ clipboard2path-wsl が必要なのか]] -- プロジェクトの動機と背景
-- [[WSL2 クリップボード連携の技術詳細]] -- wl-paste の技術詳細
+- [[なぜ clipboard2path-wsl が必要なのか]] — v2 設計変更の動機
+- [[WSL2 クリップボード連携の技術詳細]] — wl-paste、シェルフック、アトミック更新の詳細

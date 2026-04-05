@@ -17,3 +17,15 @@
 - `concepts/why-clipboard2path-wsl.md` — ソースからWiki記事に整形、wikilink追加
 - `concepts/wsl2-clipboard-interop.md` — ソースからWiki記事に整形、ポーリングフロー図追加
 - `concepts/architecture-overview.md` — ソースからWiki記事に整形、レイヤー図・テスト統計表追加
+
+## [2026-04-06] ingest | v2 architecture refresh — 3 articles rewritten
+
+- `why-clipboard2path-wsl.md` (Research) — v2設計変更の動機（RDP CLIPRDR双方向同期問題）、クリップボード非書き換え方針
+- `wsl2-clipboard-interop.md` (WSL Interop) — PathNotifier機構、アトミック更新、デーモンライフサイクル、シェルフック（fish/bash/zsh）
+- `architecture-overview.md` (Architecture) — v1→v2差分表、PathNotifier/DaemonLifecycle新設、debounce削除、サブコマンドCLI
+
+## [2026-04-06] compile | v2 wiki articles recompiled
+
+- `concepts/why-clipboard2path-wsl.md` — RDP CLIPRDR双方向同期問題、v2設計方針、ユーザー体験表
+- `concepts/wsl2-clipboard-interop.md` — パス通知メカニズム、アトミック更新、デーモンライフサイクル、fish/bash/zshフック
+- `concepts/architecture-overview.md` — v1→v2変更サマリー表、PathNotifier/DaemonLifecycleトレイト、90テスト

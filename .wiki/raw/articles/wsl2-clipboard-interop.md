@@ -1,93 +1,139 @@
 ---
 title: "WSL2 クリップボード連携の技術詳細"
 category: wsl-interop
-tags: [wsl2, wslg, wayland, wl-paste, wl-copy, clipboard]
+tags: [wsl2, wslg, wayland, wl-paste, rdp-cliprdr, shell-hook]
 source_type: internal
+updated: 2026-04-06
 ---
 
 # WSL2 クリップボード連携の技術詳細
 
-## WSLg によるクリップボード転送
-
-WSL2 では **WSLg**（Windows Subsystem for Linux GUI）がクリップボードの仲介を行う。WSLg は以下のスタックで動作する：
+## クリップボード転送スタック
 
 ```
 Windows Clipboard
-    ↓ (WSLg bridge)
-Wayland Compositor (/mnt/wslg)
-    ↓ (Wayland protocol)
-wl-paste / wl-copy (wl-clipboard)
-    ↓
-Linux Applications
+    ↓↑ RDP CLIPRDR (双方向)
+WSLg Weston Compositor (/mnt/wslg)
+    ↓↑ Wayland protocol
+wl-paste (読み取りのみ)          ← clipboard2path-wsl はここだけ使う
 ```
+
+**重要**: 同期は双方向。`wl-copy` で Wayland 側に書くと Windows 側も上書きされる。clipboard2path-wsl v2 では `wl-copy` を完全に排除し、この問題を回避している。
+
+## WSLg の仕組み
+
+- WSLg 内部で **Weston** (Wayland コンポジター) が動作
+- Weston の **RDP バックエンド** (`rdprail-shell`) がクリップボードを仲介
+- Windows ホスト側の RDP クライアント相当コンポーネントと CLIPRDR 仮想チャネルで通信
+- 仲介プロセスは `/mnt/wslg/` 以下で動作する Weston プロセス
 
 ### 環境変数
 
-WSLg が有効な環境では以下の環境変数が自動設定される：
-
+WSLg 有効環境で自動設定：
 - `WAYLAND_DISPLAY=wayland-0`
 - `XDG_RUNTIME_DIR=/run/user/{UID}`
 
-systemd サービスとして動かす場合、これらの環境変数を明示的に設定する必要がある（`clipboard2path.service` の `Environment=` 行）。
+## wl-paste の利用（読み取り専用）
 
-## wl-paste / wl-copy の動作
-
-### 利用可能な型の確認
+### 型リスト取得（差分検出）
 
 ```bash
 wl-paste --list-types
+# 出力例: image/bmp, text/plain;charset=utf-8
 ```
 
-出力例:
-```
-image/bmp
-text/plain;charset=utf-8
-```
+clipboard2path-wsl はこの MIME タイプ一覧を前回と比較することで変更検知を行う。BMP バイナリ全量を毎回取得するのではなく、型リストの比較で CPU 負荷を削減。
 
-このコマンドでクリップボードに現在入っているデータの MIME タイプ一覧を取得できる。clipboard2path-wsl はこれを差分検出に利用し、前回と型リストが変わった場合のみ変換処理を実行する（CPU 負荷の削減）。
-
-### BMP 画像の取得
+### BMP 画像取得
 
 ```bash
-wl-paste --type image/bmp > /tmp/test.bmp
+wl-paste --type image/bmp
 ```
 
-**重要な発見**: 検証環境（WSL2 + WSLg）では `image/png` は非対応で、`image/bmp` のみ取得可能だった。このため、clipboard2path-wsl は BMP 取得 → Rust 内で PNG 変換という方式を採用している。
+**検証結果**: `image/png` は非対応、`image/bmp` のみ取得可能（WSLg 環境依存）。
 
-### テキストのクリップボードへの書き込み
+## パス通知メカニズム（v2）
 
+v1 では `wl-copy` でパスをクリップボードに書き戻していたが、v2 ではファイル経由に変更：
+
+```
+$XDG_RUNTIME_DIR/clipboard2path/
+├── latest-path              ← 最新画像のフルパス（テキスト）
+├── latest.png               ← 最新画像へのシンボリックリンク
+├── clipboard-1712345678.png ← 保存された画像
+└── ...
+```
+
+### アトミック更新
+
+`latest-path` とシンボリックリンクはアトミックに更新される：
+1. 一時ファイル（`.latest-path.tmp`）に書き込み（パーミッション `0o600`）
+2. `rename()` で本体ファイルに差し替え
+
+シンボリックリンクも同様：一時名で `symlink()` → `rename()` で差し替え。
+
+### デーモンライフサイクル
+
+- **起動**: `$XDG_RUNTIME_DIR/clipboard2path/` を `mkdir -p` + `0o700` で作成
+- **停止**: SIGTERM/SIGINT でディレクトリ内全ファイル削除 + `rmdir`
+- **最悪ケース**: SIGKILL 等でクリーンアップ不可 → tmpfs なので OS 再起動で消える
+
+## シェルフック
+
+シェルの Ctrl+V をフックし、クリップボード内容に応じて動作を分岐：
+
+```
+Ctrl+V → クリップボードに image/bmp がある？
+           ├─ YES → latest-path を読んでパスを入力
+           └─ NO  → wl-paste -n で通常テキストペースト
+```
+
+### fish
+```fish
+function fish_clipboard_paste
+    set -l latest_path "$XDG_RUNTIME_DIR/clipboard2path/latest-path"
+    if test -f "$latest_path"; and wl-paste --list-types 2>/dev/null | string match -q '*image/bmp*'
+        commandline -i -- (string trim -- (cat "$latest_path"))
+    else
+        commandline -i -- (wl-paste -n 2>/dev/null)
+    end
+end
+```
+
+### bash
 ```bash
-echo "/tmp/clipboard-12345.png" | wl-copy
+clipboard2path_paste() {
+    local latest_path="$XDG_RUNTIME_DIR/clipboard2path/latest-path"
+    if [[ -f "$latest_path" ]] && wl-paste --list-types 2>/dev/null | grep -q 'image/bmp'; then
+        local path; path="$(cat "$latest_path")"
+        READLINE_LINE="${READLINE_LINE:0:$READLINE_POINT}${path}${READLINE_LINE:$READLINE_POINT}"
+        READLINE_POINT=$(( READLINE_POINT + ${#path} ))
+    else
+        local text; text="$(wl-paste -n 2>/dev/null)"
+        READLINE_LINE="${READLINE_LINE:0:$READLINE_POINT}${text}${READLINE_LINE:$READLINE_POINT}"
+        READLINE_POINT=$(( READLINE_POINT + ${#text} ))
+    fi
+}
+bind -x '"\C-v": clipboard2path_paste'
 ```
 
-clipboard2path-wsl では `Command::new("wl-copy")` で子プロセスを起動し、stdin にパス文字列をパイプで渡す。コマンドインジェクション防止のため、シェル経由ではなく直接 `arg()` で引数を渡す設計。
-
-## WSL2 環境の判定
-
-`/proc/version` の内容に "microsoft" または "WSL" が含まれるかで判定する：
-
-```
-Linux version 6.6.87.2-microsoft-standard-WSL2 (root@...) (gcc ...) #1 SMP ...
-```
-
-この判定は純粋関数 `wsl_detect::is_wsl2(&str) -> bool` として実装され、大文字小文字を区別しない。
-
-## 自己トリガー防止
-
-clipboard2path-wsl は画像を変換した後、パスを `wl-copy` でクリップボードに書き込む。この書き込みがクリップボード変更イベントとして検知され、再度処理が走ると無限ループになる。
-
-対策: **デバウンス機構**。`wl-copy` 実行後のタイムスタンプを記録し、一定時間（デフォルト 1000ms）以内のクリップボード変更は無視する。
-
-```rust
-pub fn should_process_event(
-    last_write_timestamp_ms: Option<u64>,
-    current_timestamp_ms: u64,
-    debounce_ms: u64,
-) -> bool
+### zsh
+```zsh
+clipboard2path-paste() {
+    local latest_path="$XDG_RUNTIME_DIR/clipboard2path/latest-path"
+    if [[ -f "$latest_path" ]] && wl-paste --list-types 2>/dev/null | grep -q 'image/bmp'; then
+        LBUFFER+="$(cat "$latest_path")"
+    else
+        LBUFFER+="$(wl-paste -n 2>/dev/null)"
+    fi
+}
+zle -N clipboard2path-paste
+bindkey '^V' clipboard2path-paste
 ```
 
 ## 既知の制限
 
-- WSLg が無効な環境（古い WSL2 カーネル）では `wl-paste` / `wl-copy` が動作しない
+- WSLg 無効環境では `wl-paste` が動作しない
 - Windows 10 の一部環境では WSLg 自体が利用不可
-- 画像以外のクリップボードデータ（ファイルパス、リッチテキスト等）は現在対象外
+- `image/bmp` のみ対応（`image/png` は WSLg で非対応の環境あり）
+- シェルフックはターミナル内でのみ有効（GUIアプリには適用されない）
