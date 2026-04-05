@@ -33,12 +33,7 @@ fn main() {
     }
 
     // DI assembly
-    let service = ConvertService::new(
-        WlClipboard,
-        WlClipboard,
-        RealFileWriter,
-        SystemTimestamp,
-    );
+    let service = ConvertService::new(WlClipboard, WlClipboard, RealFileWriter, SystemTimestamp);
 
     // Execute conversion
     match service.convert_once(base_dir) {

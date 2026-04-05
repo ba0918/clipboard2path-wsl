@@ -12,8 +12,7 @@ mod tests {
 
     #[test]
     fn detects_wsl2_microsoft() {
-        let version =
-            "Linux version 5.15.90.1-microsoft-standard-WSL2 (root@1234) (gcc) #1 SMP";
+        let version = "Linux version 5.15.90.1-microsoft-standard-WSL2 (root@1234) (gcc) #1 SMP";
         assert!(is_wsl2(version));
     }
 

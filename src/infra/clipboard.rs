@@ -161,9 +161,6 @@ mod tests {
             written: std::cell::RefCell::new(None),
         };
         writer.write_text("/tmp/test.png").unwrap();
-        assert_eq!(
-            *writer.written.borrow(),
-            Some("/tmp/test.png".to_string())
-        );
+        assert_eq!(*writer.written.borrow(), Some("/tmp/test.png".to_string()));
     }
 }

@@ -35,7 +35,9 @@ impl FileWriter for RealFileWriter {
         let mut options = fs::OpenOptions::new();
         options.write(true).create(true).truncate(true).mode(0o600);
 
-        let mut file = options.open(path).map_err(|e| FsError::IoError(e.to_string()))?;
+        let mut file = options
+            .open(path)
+            .map_err(|e| FsError::IoError(e.to_string()))?;
 
         use std::io::Write;
         file.write_all(data)
