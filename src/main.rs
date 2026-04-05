@@ -9,36 +9,103 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use domain::cleanup::{self, FileEntry};
-use domain::cli::{self, Verbosity};
+use domain::cli::{self, Command, Verbosity, WatchArgs};
 use domain::runtime_dir;
+use domain::shell_detect;
 use domain::wsl_detect;
 use infra::clipboard::WlClipboard;
 use infra::file_system::RealFileWriter;
 use infra::lifecycle::{DaemonLifecycle, FsDaemonLifecycle};
+use infra::shell_installer::{FsShellInstaller, ShellInstaller};
 use service::converter::{ConvertService, SystemTimestamp};
 use service::daemon::{self, PollResult};
 
 fn main() {
     // Parse CLI arguments
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
-    let args = match cli::parse_args(&raw_args) {
-        Ok(a) => a,
+    let command = match cli::parse_args(&raw_args) {
+        Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");
             process::exit(1);
         }
     };
 
-    if args.help {
-        println!("{}", cli::help_text());
-        return;
+    match command {
+        Command::Help => {
+            println!("{}", cli::help_text());
+        }
+        Command::Version => {
+            println!("{}", cli::version_text());
+        }
+        Command::Init(args) => run_init(args),
+        Command::Uninstall(args) => run_uninstall(args),
+        Command::Watch(args) => run_watch(args),
     }
+}
 
-    if args.version {
-        println!("{}", cli::version_text());
-        return;
+fn run_init(args: cli::InitArgs) {
+    let shell = resolve_shell(args.shell.as_deref());
+    let home = std::env::var("HOME").unwrap_or_else(|_| {
+        eprintln!("error: $HOME is not set");
+        process::exit(1);
+    });
+
+    let installer = FsShellInstaller::new(home);
+    match installer.install(shell, args.force) {
+        Ok(path) => {
+            eprintln!("installed: shell hook for {shell} at {path}");
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
     }
+}
 
+fn run_uninstall(args: cli::UninstallArgs) {
+    let shell = resolve_shell(args.shell.as_deref());
+    let home = std::env::var("HOME").unwrap_or_else(|_| {
+        eprintln!("error: $HOME is not set");
+        process::exit(1);
+    });
+
+    let installer = FsShellInstaller::new(home);
+    match installer.uninstall(shell) {
+        Ok(path) => {
+            eprintln!("uninstalled: shell hook for {shell} from {path}");
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+    }
+}
+
+/// Resolve shell type from explicit name or $SHELL env var.
+fn resolve_shell(name: Option<&str>) -> shell_detect::ShellType {
+    match name {
+        Some(n) => match shell_detect::parse_shell_name(n) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error: {e}");
+                process::exit(1);
+            }
+        },
+        None => {
+            let shell_env = std::env::var("SHELL").unwrap_or_default();
+            match shell_detect::detect_shell(&shell_env) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+            }
+        }
+    }
+}
+
+fn run_watch(args: WatchArgs) {
     let verbosity = args.verbosity;
 
     // WSL2 check
@@ -123,8 +190,11 @@ fn log_verbose(verbosity: Verbosity, msg: &str) {
     }
 }
 
-fn run_once<C, F, T, N>(service: &ConvertService<C, F, T, N>, base_dir: &Path, verbosity: Verbosity)
-where
+fn run_once<C, F, T, N>(
+    service: &ConvertService<C, F, T, N>,
+    base_dir: &Path,
+    verbosity: Verbosity,
+) where
     C: infra::clipboard::ClipboardReader,
     F: infra::file_system::FileWriter,
     T: service::converter::TimestampProvider,
