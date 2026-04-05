@@ -120,12 +120,8 @@ fi
 sed -i "s/^version = \"${current_version}\"/version = \"${new_version}\"/" "$CARGO_TOML"
 ok "Updated ${CARGO_TOML} to ${new_version}"
 
-# ── Update Cargo.lock ──────────────────────────────────
-cargo generate-lockfile --quiet 2>/dev/null || cargo check --quiet 2>/dev/null || true
-ok "Updated Cargo.lock"
-
 # ── Commit and tag ─────────────────────────────────────
-git add "$CARGO_TOML" Cargo.lock
+git add "$CARGO_TOML"
 git commit -m "chore: release ${new_tag}"
 git tag -a "$new_tag" -m "Release ${new_tag}"
 ok "Created commit and tag: ${new_tag}"
