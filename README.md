@@ -34,8 +34,22 @@ sudo apt install wl-clipboard
 
 ## インストール
 
+### ワンライナー（推奨）
+
 ```bash
-git clone https://github.com/your-user/clipboard2path-wsl.git
+curl -fsSL https://raw.githubusercontent.com/ba0918/clipboard2path-wsl/main/scripts/install.sh | bash
+```
+
+`~/.local/bin` にバイナリを配置する。`INSTALL_DIR` で変更可能:
+
+```bash
+INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/ba0918/clipboard2path-wsl/main/scripts/install.sh | bash
+```
+
+### ソースからビルド
+
+```bash
+git clone https://github.com/ba0918/clipboard2path-wsl.git
 cd clipboard2path-wsl
 cargo install --path .
 ```
@@ -124,17 +138,19 @@ clipboard2path-wsl --verbose
 
 ## systemd で自動起動
 
+`init` コマンドで systemd ユーザーサービスも自動的に配置・有効化される:
+
 ```bash
-# サービスファイルをコピー
-mkdir -p ~/.config/systemd/user
-cp clipboard2path.service ~/.config/systemd/user/
+clipboard2path-wsl init          # シェルフック + systemd サービス
+clipboard2path-wsl init --no-service  # シェルフックのみ
+```
 
-# 有効化・起動
-systemctl --user enable clipboard2path-wsl
-systemctl --user start clipboard2path-wsl
+手動操作:
 
-# ログ確認
-journalctl --user -u clipboard2path-wsl -f
+```bash
+systemctl --user status clipboard2path-wsl   # 状態確認
+systemctl --user restart clipboard2path-wsl  # 再起動
+journalctl --user -u clipboard2path-wsl -f   # ログ確認
 ```
 
 SIGTERM/SIGINT でクリーンシャットダウン（ランタイムディレクトリのクリーンアップ）を実行する。
