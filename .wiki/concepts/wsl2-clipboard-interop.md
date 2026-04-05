@@ -53,7 +53,7 @@ wl-paste --type image/bmp
 ```
 $XDG_RUNTIME_DIR/clipboard2path/
 ├── latest-path              ← 最新画像のフルパス（テキスト）
-├── latest.png               ← 最新画像へのシンボリックリン��
+├── latest.png               ← 最新画像へのシンボリックリンク
 ├── clipboard-1712345678.png
 └── ...（最大20件、古い順にローテート）
 ```

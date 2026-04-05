@@ -12,7 +12,7 @@ related:
   - "[[WSL2 クリップボード連携の技術詳細]]"
 ---
 
-# アーキテクチャ概要��v2）
+# アーキテクチャ概要（v2）
 
 ## 概要
 
@@ -53,7 +53,7 @@ clipboard2path-wsl は **テスタビリティ最優先** の3層アーキテク
 | パス通知 | `ClipboardWriter` | **`PathNotifier`**（latest-path + symlink） |
 | 保存先 | `/tmp/` | **`$XDG_RUNTIME_DIR/clipboard2path/`** |
 | 自己トリガー防止 | `debounce.rs` | **削除**（書き換えないので不要） |
-| ���ーテーション | 100件 + 24時間 | **20件**（件数ベースのみ） |
+| ローテーション | 100件 + 24時間 | **20件**（件数ベースのみ） |
 | CLI構造 | フラット | **サブコマンド**（Watch/Init/Uninstall） |
 | シェル統合 | なし | **fish/bash/zsh フック** |
 | ライフサイクル | なし | **setup/teardown**（SIGTERM対応） |
@@ -130,7 +130,7 @@ let notifier = FilePathNotifier::new(base_dir.clone());
 let service = ConvertService::new(WlClipboard, RealFileWriter, SystemTimestamp, notifier);
 ```
 
-サ���コマンド: `Watch`（デフォルト）、`Init`、`Uninstall`、`Help`、`Version`
+サブコマンド: `Watch`（デフォルト）、`Init`、`Uninstall`、`Help`、`Version`
 
 ## テスト戦略
 
