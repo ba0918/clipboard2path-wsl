@@ -52,12 +52,13 @@ fn run_init(args: cli::InitArgs) {
     let shell = resolve_shell(args.shell.as_deref());
     let home = resolve_home();
     let mut has_error = false;
+    let mut results: Vec<String> = Vec::new();
 
     // Shell hook installation (force=true for idempotent updates)
     let shell_installer = FsShellInstaller::new(home.clone());
     match shell_installer.install(shell, true) {
-        Ok(path) => {
-            eprintln!("installed: shell hook for {shell} at {path}");
+        Ok(_path) => {
+            results.push(format!("\u{2714} shell hook installed ({shell})"));
         }
         Err(e) => {
             eprintln!("error: shell hook: {e}");
@@ -69,7 +70,7 @@ fn run_init(args: cli::InitArgs) {
     if !args.no_service {
         match install_systemd_service(&home) {
             Ok(()) => {
-                eprintln!("installed: systemd service");
+                results.push("\u{2714} systemd service installed and started".to_string());
             }
             Err(e) => {
                 eprintln!("error: systemd service: {e}");
@@ -77,7 +78,24 @@ fn run_init(args: cli::InitArgs) {
             }
         }
     } else {
-        eprintln!("skipped: systemd service (--no-service)");
+        results.push("- systemd service skipped (--no-service)".to_string());
+    }
+
+    // Print results summary
+    for line in &results {
+        eprintln!("{line}");
+    }
+
+    if !has_error {
+        eprintln!();
+        eprintln!("Next steps:");
+        eprintln!("  1. Restart your shell (or run: exec $SHELL)");
+        if !args.no_service {
+            eprintln!(
+                "  2. Verify: systemctl --user status {}",
+                systemd_unit::SERVICE_NAME.trim_end_matches(".service")
+            );
+        }
     }
 
     if has_error {
@@ -89,12 +107,13 @@ fn run_uninstall(args: cli::UninstallArgs) {
     let shell = resolve_shell(args.shell.as_deref());
     let home = resolve_home();
     let mut has_error = false;
+    let mut results: Vec<String> = Vec::new();
 
     // Shell hook removal
     let shell_installer = FsShellInstaller::new(home.clone());
     match shell_installer.uninstall(shell) {
-        Ok(path) => {
-            eprintln!("uninstalled: shell hook for {shell} from {path}");
+        Ok(_path) => {
+            results.push(format!("\u{2714} shell hook removed ({shell})"));
         }
         Err(e) => {
             eprintln!("error: shell hook: {e}");
@@ -108,7 +127,7 @@ fn run_uninstall(args: cli::UninstallArgs) {
         let systemd_installer = FsSystemdInstaller::new(runner);
         match systemd_installer.uninstall(&home) {
             Ok(()) => {
-                eprintln!("uninstalled: systemd service");
+                results.push("\u{2714} systemd service stopped and removed".to_string());
             }
             Err(e) => {
                 eprintln!("error: systemd service: {e}");
@@ -116,7 +135,12 @@ fn run_uninstall(args: cli::UninstallArgs) {
             }
         }
     } else {
-        eprintln!("skipped: systemd service (--no-service)");
+        results.push("- systemd service skipped (--no-service)".to_string());
+    }
+
+    // Print results summary
+    for line in &results {
+        eprintln!("{line}");
     }
 
     if has_error {
