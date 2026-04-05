@@ -4,14 +4,17 @@ mod service;
 
 use std::path::Path;
 use std::process;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use domain::cleanup::{self, FileEntry};
 use domain::cli::{self, Verbosity};
+use domain::runtime_dir;
 use domain::wsl_detect;
 use infra::clipboard::WlClipboard;
 use infra::file_system::RealFileWriter;
+use infra::lifecycle::{DaemonLifecycle, FsDaemonLifecycle};
 use service::converter::{ConvertService, SystemTimestamp};
 use service::daemon::{self, PollResult};
 
@@ -52,14 +55,47 @@ fn main() {
         process::exit(1);
     }
 
-    // Validate output directory
-    let base_dir = match domain::path_gen::validate_output_dir(&args.output_dir) {
-        Ok(p) => p,
+    // Resolve runtime directory
+    let xdg = std::env::var("XDG_RUNTIME_DIR").ok();
+    let runtime_dir = match runtime_dir::resolve_runtime_dir(xdg.as_deref()) {
+        Ok(d) => d,
         Err(e) => {
-            eprintln!("error: invalid output directory: {e}");
+            eprintln!("error: {e}");
             process::exit(1);
         }
     };
+
+    // Determine output directory: explicit --output-dir overrides runtime_dir
+    let base_dir = if args.output_dir.as_os_str().is_empty() {
+        runtime_dir.clone()
+    } else {
+        match domain::path_gen::validate_output_dir(&args.output_dir) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("error: invalid output directory: {e}");
+                process::exit(1);
+            }
+        }
+    };
+
+    // Daemon lifecycle: setup directory
+    let lifecycle = FsDaemonLifecycle;
+    if let Err(e) = lifecycle.setup(&base_dir) {
+        eprintln!("error: {e}");
+        process::exit(1);
+    }
+
+    // SIGTERM/SIGINT handler: teardown on shutdown
+    let teardown_dir = Arc::new(base_dir.clone());
+    {
+        let dir = Arc::clone(&teardown_dir);
+        ctrlc::set_handler(move || {
+            let lc = FsDaemonLifecycle;
+            let _ = lc.teardown(&dir);
+            process::exit(0);
+        })
+        .expect("failed to set signal handler");
+    }
 
     // DI assembly
     let service = ConvertService::new(WlClipboard, WlClipboard, RealFileWriter, SystemTimestamp);
