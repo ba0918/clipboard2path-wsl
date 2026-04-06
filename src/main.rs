@@ -476,9 +476,7 @@ fn run_daemon<C, F, T, N>(
     );
 
     loop {
-        let (result, new_types) = daemon::poll_once(service, &previous_types, base_dir);
-
-        previous_types = new_types;
+        let result = daemon::poll_once(service, &mut previous_types, base_dir);
 
         match result {
             PollResult::Converted(path) => {

@@ -30,9 +30,9 @@ pub enum PollResult {
 /// so self-triggering cannot occur.
 pub fn poll_once<C, F, T, N>(
     service: &ConvertService<C, F, T, N>,
-    previous_types: &[String],
+    previous_types: &mut Vec<String>,
     base_dir: &Path,
-) -> (PollResult, Vec<String>)
+) -> PollResult
 where
     C: ClipboardReader,
     F: FileWriter,
@@ -43,29 +43,35 @@ where
     let current_types = match service.reader().list_types() {
         Ok(types) => types,
         Err(e) => {
-            return (
-                PollResult::ClipboardError(e.to_string()),
-                previous_types.to_vec(),
-            );
+            // On error, keep previous_types unchanged (no clone needed)
+            return PollResult::ClipboardError(e.to_string());
         }
     };
 
     // 2. Check for change
     if !clipboard_change::has_clipboard_changed(previous_types, &current_types) {
-        return (PollResult::NoChange, current_types);
+        previous_types.clear();
+        previous_types.extend(current_types);
+        return PollResult::NoChange;
     }
 
     // 3. Check for BMP — if clipboard changed to non-image, clear latest-path
     if !clipboard_change::has_bmp_image(&current_types) {
         let _ = service.clear_notification();
-        return (PollResult::NoBmpImage, current_types);
+        previous_types.clear();
+        previous_types.extend(current_types);
+        return PollResult::NoBmpImage;
     }
 
     // 4. Convert
-    match service.convert_once(base_dir) {
-        Ok(path) => (PollResult::Converted(path), current_types),
-        Err(e) => (PollResult::ConvertError(e.to_string()), current_types),
-    }
+    let result = match service.convert_once(base_dir) {
+        Ok(path) => PollResult::Converted(path),
+        Err(e) => PollResult::ConvertError(e.to_string()),
+    };
+
+    previous_types.clear();
+    previous_types.extend(current_types);
+    result
 }
 
 #[cfg(test)]
@@ -146,13 +152,11 @@ mod tests {
             MockNotifier,
         );
 
-        let (result, _) = poll_once(
-            &service,
-            &[], // previous: empty (change detected)
-            Path::new("/tmp"),
-        );
+        let mut prev = Vec::new();
+        let result = poll_once(&service, &mut prev, Path::new("/tmp"));
 
         assert!(matches!(result, PollResult::Converted(_)));
+        assert_eq!(prev, vec!["image/bmp".to_string()]);
     }
 
     #[test]
@@ -167,12 +171,8 @@ mod tests {
             MockNotifier,
         );
 
-        let prev = vec!["image/bmp".to_string()];
-        let (result, _) = poll_once(
-            &service,
-            &prev, // same as current
-            Path::new("/tmp"),
-        );
+        let mut prev = vec!["image/bmp".to_string()];
+        let result = poll_once(&service, &mut prev, Path::new("/tmp"));
 
         assert_eq!(result, PollResult::NoChange);
     }
@@ -189,12 +189,38 @@ mod tests {
             MockNotifier,
         );
 
-        let (result, _) = poll_once(
-            &service,
-            &[], // empty previous -> change detected
-            Path::new("/tmp"),
-        );
+        let mut prev = Vec::new();
+        let result = poll_once(&service, &mut prev, Path::new("/tmp"));
 
         assert_eq!(result, PollResult::NoBmpImage);
+        assert_eq!(prev, vec!["text/plain".to_string()]);
+    }
+
+    #[test]
+    fn poll_once_reuses_buffer() {
+        let bmp = make_1x1_bmp();
+        let service = ConvertService::new(
+            MockReader {
+                types: vec!["image/bmp".to_string()],
+                bmp_data: bmp,
+            },
+            MockFileWriter,
+            FixedTimestamp("1".into()),
+            MockNotifier,
+        );
+
+        let mut prev = Vec::with_capacity(16);
+        let ptr_before = prev.as_ptr();
+        let _ = poll_once(&service, &mut prev, Path::new("/tmp"));
+
+        // After first poll, buffer is populated
+        assert_eq!(prev, vec!["image/bmp".to_string()]);
+
+        // Second poll with same types: NoChange, buffer updated in-place
+        let _ = poll_once(&service, &mut prev, Path::new("/tmp"));
+        let ptr_after = prev.as_ptr();
+
+        // Buffer pointer should be the same (reused, not reallocated)
+        assert_eq!(ptr_before, ptr_after);
     }
 }
