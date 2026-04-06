@@ -111,12 +111,8 @@ fn run_init(args: cli::InitArgs) {
                 systemd_unit::SERVICE_NAME.trim_end_matches(".service")
             );
             // Show which wl-paste is resolved
-            if let Ok(output) = std::process::Command::new("which").arg("wl-paste").output() {
-                let resolved = String::from_utf8_lossy(&output.stdout);
-                let resolved = resolved.trim();
-                if !resolved.is_empty() {
-                    eprintln!("  3. wl-paste resolves to: {resolved}");
-                }
+            if let Some(resolved) = resolve_wl_paste_path() {
+                eprintln!("  3. wl-paste resolves to: {resolved}");
             }
         }
     }
@@ -214,6 +210,20 @@ fn install_systemd_service(home: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Resolve the path that `which wl-paste` returns.
+fn resolve_wl_paste_path() -> Option<String> {
+    let output = std::process::Command::new("which")
+        .arg("wl-paste")
+        .output()
+        .ok()?;
+    let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if resolved.is_empty() {
+        None
+    } else {
+        Some(resolved)
+    }
+}
+
 /// Resolve $HOME or exit.
 fn resolve_home() -> String {
     std::env::var("HOME").unwrap_or_else(|_| {
@@ -261,12 +271,8 @@ fn run_status() {
         let wrapper_path = domain::wl_paste_wrapper::wrapper_install_path(&home);
         println!("  wl-paste wrapper: installed ({wrapper_path})");
         // Show which wl-paste is resolved
-        if let Ok(output) = std::process::Command::new("which").arg("wl-paste").output() {
-            let resolved = String::from_utf8_lossy(&output.stdout);
-            let resolved = resolved.trim();
-            if !resolved.is_empty() {
-                println!("  wl-paste resolves to: {resolved}");
-            }
+        if let Some(resolved) = resolve_wl_paste_path() {
+            println!("  wl-paste resolves to: {resolved}");
         }
     } else {
         println!("  wl-paste wrapper: not installed");

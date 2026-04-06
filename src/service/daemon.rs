@@ -79,65 +79,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infra::clipboard::ClipboardError as CErr;
-    use crate::infra::file_system::{FileWriter, FsError};
-    use crate::infra::path_notifier::{NotifyError, PathNotifier};
     use crate::service::converter::ConvertService;
-    use std::io::Cursor;
-    use std::path::Path;
-
-    // --- Mocks ---
-
-    struct MockReader {
-        types: Vec<String>,
-        bmp_data: Vec<u8>,
-    }
-
-    impl ClipboardReader for MockReader {
-        fn read_image_bmp(&self) -> Result<Vec<u8>, CErr> {
-            Ok(self.bmp_data.clone())
-        }
-
-        fn list_types(&self) -> Result<Vec<String>, CErr> {
-            Ok(self.types.clone())
-        }
-    }
-
-    struct MockFileWriter;
-
-    impl FileWriter for MockFileWriter {
-        fn write_bytes(&self, _path: &Path, _data: &[u8]) -> Result<(), FsError> {
-            Ok(())
-        }
-    }
-
-    struct MockNotifier;
-
-    impl PathNotifier for MockNotifier {
-        fn notify(&self, _path: &Path) -> Result<(), NotifyError> {
-            Ok(())
-        }
-
-        fn clear(&self) -> Result<(), NotifyError> {
-            Ok(())
-        }
-    }
-
-    struct FixedTimestamp(String);
-    impl TimestampProvider for FixedTimestamp {
-        fn now(&self) -> String {
-            self.0.clone()
-        }
-    }
-
-    fn make_1x1_bmp() -> Vec<u8> {
-        use image::{ImageBuffer, Rgb};
-        let img = ImageBuffer::from_pixel(1, 1, Rgb([255u8, 0, 0]));
-        let mut buf = Vec::new();
-        img.write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Bmp)
-            .unwrap();
-        buf
-    }
+    use crate::service::test_helpers::*;
 
     // --- Tests ---
 
@@ -145,13 +88,13 @@ mod tests {
     fn poll_once_converts_when_bmp_present_and_changed() {
         let bmp = make_1x1_bmp();
         let service = ConvertService::new(
-            MockReader {
+            MockClipboardReader {
                 types: vec!["image/bmp".to_string()],
                 bmp_data: bmp,
             },
             MockFileWriter,
             FixedTimestamp("1".into()),
-            MockNotifier,
+            MockPathNotifier,
         );
 
         let mut prev = Vec::new();
@@ -164,13 +107,13 @@ mod tests {
     #[test]
     fn poll_once_skips_when_no_change() {
         let service = ConvertService::new(
-            MockReader {
+            MockClipboardReader {
                 types: vec!["image/bmp".to_string()],
                 bmp_data: vec![],
             },
             MockFileWriter,
             FixedTimestamp("1".into()),
-            MockNotifier,
+            MockPathNotifier,
         );
 
         let mut prev = vec!["image/bmp".to_string()];
@@ -182,13 +125,13 @@ mod tests {
     #[test]
     fn poll_once_skips_when_no_bmp() {
         let service = ConvertService::new(
-            MockReader {
+            MockClipboardReader {
                 types: vec!["text/plain".to_string()],
                 bmp_data: vec![],
             },
             MockFileWriter,
             FixedTimestamp("1".into()),
-            MockNotifier,
+            MockPathNotifier,
         );
 
         let mut prev = Vec::new();
@@ -202,13 +145,13 @@ mod tests {
     fn poll_once_reuses_buffer() {
         let bmp = make_1x1_bmp();
         let service = ConvertService::new(
-            MockReader {
+            MockClipboardReader {
                 types: vec!["image/bmp".to_string()],
                 bmp_data: bmp,
             },
             MockFileWriter,
             FixedTimestamp("1".into()),
-            MockNotifier,
+            MockPathNotifier,
         );
 
         let mut prev = Vec::with_capacity(16);

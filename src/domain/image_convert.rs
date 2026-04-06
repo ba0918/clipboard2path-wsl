@@ -35,7 +35,7 @@ pub fn convert_bmp_to_png(bmp_bytes: &[u8]) -> Result<Vec<u8>, ConvertError> {
     let img = image::load_from_memory_with_format(bmp_bytes, image::ImageFormat::Bmp)
         .map_err(|e| ConvertError::InvalidBmp(e.to_string()))?;
 
-    let mut png_buf = Vec::new();
+    let mut png_buf = Vec::with_capacity(bmp_bytes.len());
     img.write_to(&mut Cursor::new(&mut png_buf), image::ImageFormat::Png)
         .map_err(|e| ConvertError::PngEncodeFailed(e.to_string()))?;
 

@@ -40,16 +40,11 @@ impl fmt::Display for ShellDetectError {
 /// Detect shell type from the `$SHELL` environment variable value.
 ///
 /// Pure function: takes the shell path string, returns the detected type.
+/// Extracts the basename from the path before matching.
 pub fn detect_shell(shell_env: &str) -> Result<ShellType, ShellDetectError> {
     // Extract basename from path (e.g., "/usr/bin/fish" -> "fish")
     let basename = shell_env.rsplit('/').next().unwrap_or(shell_env);
-
-    match basename {
-        "fish" => Ok(ShellType::Fish),
-        "bash" => Ok(ShellType::Bash),
-        "zsh" => Ok(ShellType::Zsh),
-        other => Err(ShellDetectError::Unsupported(other.to_string())),
-    }
+    parse_shell_name(basename)
 }
 
 /// Parse a shell name string (e.g., from CLI argument) into ShellType.

@@ -2,3 +2,6 @@
 
 pub mod converter;
 pub mod daemon;
+
+#[cfg(test)]
+pub(crate) mod test_helpers;
