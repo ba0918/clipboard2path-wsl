@@ -30,7 +30,7 @@ pub trait FileWriter {
 pub fn validate_output_dir(
     path: &Path,
 ) -> Result<std::path::PathBuf, crate::domain::path_gen::PathError> {
-    use crate::domain::path_gen::{validate_path_components, PathError};
+    use crate::domain::path_gen::{PathError, validate_path_components};
 
     validate_path_components(path)?;
 

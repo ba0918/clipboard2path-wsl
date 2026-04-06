@@ -61,6 +61,7 @@ pub fn validate_safe_path(path: &str) -> Result<(), PathValidateError> {
 }
 
 /// Boolean version of `validate_safe_path`.
+#[allow(dead_code)]
 pub fn is_safe_for_shell(path: &str) -> bool {
     validate_safe_path(path).is_ok()
 }
