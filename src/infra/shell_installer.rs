@@ -1,6 +1,8 @@
 //! Shell hook file installation/removal.
 
 use std::fmt;
+use std::fs::Permissions;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use crate::domain::shell_detect::ShellType;
@@ -99,6 +101,10 @@ fn install_fish_hook(home: &str, content: &str, force: bool) -> Result<String, I
     std::fs::write(target_path, content)
         .map_err(|e| InstallError::IoError(format!("failed to write {target}: {e}")))?;
 
+    std::fs::set_permissions(target_path, Permissions::from_mode(0o644)).map_err(|e| {
+        InstallError::IoError(format!("failed to set permissions on {target}: {e}"))
+    })?;
+
     Ok(target)
 }
 
@@ -117,6 +123,10 @@ fn install_rc_hook(
     let hook_file = format!("{hook_dir}/hook.{shell}");
     std::fs::write(&hook_file, content)
         .map_err(|e| InstallError::IoError(format!("failed to write {hook_file}: {e}")))?;
+
+    std::fs::set_permissions(Path::new(&hook_file), Permissions::from_mode(0o644)).map_err(
+        |e| InstallError::IoError(format!("failed to set permissions on {hook_file}: {e}")),
+    )?;
 
     // Add source line to rc file
     let rc_path = shell_hook::hook_install_path(shell, home);
@@ -231,6 +241,45 @@ mod tests {
 
         let target = result.unwrap();
         assert!(Path::new(&target).exists());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn install_fish_sets_644_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = std::env::temp_dir().join("clipboard2path_test_fish_perms");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let home = tmp.to_string_lossy().to_string();
+        let installer = FsShellInstaller::new(home);
+        let target = installer.install(ShellType::Fish, false).unwrap();
+
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644, "fish hook should have 0o644 permissions");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn install_bash_hook_file_sets_644_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = std::env::temp_dir().join("clipboard2path_test_bash_perms");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let bashrc = tmp.join(".bashrc");
+        std::fs::write(&bashrc, "existing\n").unwrap();
+
+        let home = tmp.to_string_lossy().to_string();
+        let installer = FsShellInstaller::new(home.clone());
+        installer.install(ShellType::Bash, false).unwrap();
+
+        let hook_file = format!("{home}/.config/clipboard2path/hook.bash");
+        let mode = std::fs::metadata(&hook_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644, "bash hook file should have 0o644 permissions");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
