@@ -1,12 +1,21 @@
 # Project Status
 
-**Last Updated:** 2026-04-06 04:25:00
+**Last Updated:** 2026-04-06 20:48:08
 
 ---
 
 ## 🎯 Current Session
 
-_No active session_
+| Field | Value |
+|-------|-------|
+| **Cycle ID** | `20260406204808` |
+| **Feature** | wl-paste ラッパー（Claude Code 画像ペースト対応） |
+| **Started** | 2026-04-06 20:48:08 |
+| **Phase** | 🔵 Implementing |
+| **Plan** | [docs/plans/20260406204808_powershell-png-and-wlpaste-wrapper.md](./plans/20260406204808_powershell-png-and-wlpaste-wrapper.md) |
+
+**Current Focus:**
+Claude Code の chat:imagePaste が WSLg の BMP で動作しない問題を wl-paste ラッパーで解決する
 
 ---
 
