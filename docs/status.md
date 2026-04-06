@@ -1,21 +1,12 @@
 # Project Status
 
-**Last Updated:** 2026-04-06 20:48:08
+**Last Updated:** 2026-04-06
 
 ---
 
 ## 🎯 Current Session
 
-| Field | Value |
-|-------|-------|
-| **Cycle ID** | `20260406204808` |
-| **Feature** | wl-paste ラッパー（Claude Code 画像ペースト対応） |
-| **Started** | 2026-04-06 20:48:08 |
-| **Phase** | 🟢 Complete |
-| **Plan** | [docs/plans/20260406204808_powershell-png-and-wlpaste-wrapper.md](./plans/20260406204808_powershell-png-and-wlpaste-wrapper.md) |
-
-**Current Focus:**
-Claude Code の chat:imagePaste が WSLg の BMP で動作しない問題を wl-paste ラッパーで解決する
+_No active session._
 
 ---
 
@@ -25,6 +16,9 @@ _Archived sessions can be found in [session-history.md](./session-history.md)._
 
 ## Completed Plans
 
+- **[wl-paste ラッパー](plans/20260406204808_powershell-png-and-wlpaste-wrapper.md)** — 🟢 complete
+  - 6 steps, 6 commits, 146 tests (21 new Rust + 10 bash integration)
+  - [Result](plans/results/20260406204808_powershell-png-and-wlpaste-wrapper_result.md)
 - **[セットアップフロー洗練化](plans/20260406041253_setup-flow-refinement.md)** — 🟢 complete
   - 8 steps, 9 commits, 125 tests, 665KB binary
   - [Result](plans/results/20260406041253_setup-flow-refinement_result.md)
