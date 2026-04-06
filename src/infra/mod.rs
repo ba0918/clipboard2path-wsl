@@ -5,3 +5,4 @@ pub mod lifecycle;
 pub mod path_notifier;
 pub mod shell_installer;
 pub mod systemd_installer;
+pub mod wrapper_installer;
