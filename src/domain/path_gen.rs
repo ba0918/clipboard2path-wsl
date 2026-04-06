@@ -1,3 +1,5 @@
+//! File path generation and validation (pure functions).
+
 use std::fmt;
 use std::path::{Path, PathBuf};
 

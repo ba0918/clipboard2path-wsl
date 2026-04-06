@@ -1,3 +1,5 @@
+//! Daemon poll loop logic.
+
 use std::path::Path;
 
 use crate::domain::clipboard_change;

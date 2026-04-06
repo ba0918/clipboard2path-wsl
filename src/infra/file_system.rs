@@ -1,3 +1,5 @@
+//! File system write abstraction.
+
 use std::fmt;
 use std::path::Path;
 

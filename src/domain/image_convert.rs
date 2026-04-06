@@ -1,3 +1,5 @@
+//! BMP to PNG image conversion (pure functions).
+
 use std::fmt;
 use std::io::Cursor;
 

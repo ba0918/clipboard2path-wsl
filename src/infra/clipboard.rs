@@ -1,10 +1,12 @@
+//! Clipboard reading via wl-paste (read-only).
+
 use std::fmt;
 use std::process::Command;
 
 /// Error type for clipboard operations.
 #[derive(Debug)]
 pub enum ClipboardError {
-    /// The clipboard tool (wl-paste/wl-copy) was not found.
+    /// The clipboard tool (wl-paste) was not found.
     ToolNotFound(String),
     /// The clipboard tool exited with a non-zero status.
     CommandFailed { tool: String, stderr: String },

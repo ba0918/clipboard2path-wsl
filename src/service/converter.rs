@@ -1,3 +1,5 @@
+//! Clipboard-to-file conversion service.
+
 use std::fmt;
 use std::path::{Path, PathBuf};
 

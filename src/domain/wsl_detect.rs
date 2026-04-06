@@ -1,3 +1,5 @@
+//! WSL2 environment detection (pure functions).
+
 /// Determine if running on WSL2 by inspecting /proc/version content.
 ///
 /// Pure function: takes the content string, returns a bool.
