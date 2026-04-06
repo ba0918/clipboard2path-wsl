@@ -206,7 +206,7 @@ WSLg の wl-paste を完全バイパスし、Windows の .NET API (`System.Windo
 | 1 | `domain/wl_paste_wrapper.rs` — ラッパースクリプト生成 + マーカー定数 | 🟢 |
 | 2 | `domain/cli.rs` — InitArgs に `--force` フラグ追加 | 🟢 |
 | 3 | `infra/wrapper_installer.rs` — マーカーベースインストール/アンインストール + ディレクトリ作成 | 🟢 |
-| 4 | `main.rs` — init/uninstall/status にラッパー統合 + PATH 表示 | ⚪ |
+| 4 | `main.rs` — init/uninstall/status にラッパー統合 + PATH 表示 | 🟢 |
 | 5 | CLAUDE.md 更新 | ⚪ |
 | 6 | テスト（ユニット + bash 統合） | ⚪ |
 | 7 | 手動検証（Claude Code で Alt+V） | ⚪ |

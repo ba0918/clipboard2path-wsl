@@ -20,6 +20,7 @@ use infra::file_system::RealFileWriter;
 use infra::lifecycle::{DaemonLifecycle, FsDaemonLifecycle};
 use infra::shell_installer::{FsShellInstaller, ShellInstaller};
 use infra::systemd_installer::{FsSystemdInstaller, SystemdInstaller};
+use infra::wrapper_installer::{FsWrapperInstaller, WrapperInstaller};
 use service::converter::{ConvertService, SystemTimestamp};
 use service::daemon::{self, PollResult};
 
@@ -81,6 +82,20 @@ fn run_init(args: cli::InitArgs) {
         results.push("- systemd service skipped (--no-service)".to_string());
     }
 
+    // wl-paste wrapper installation (only when service is enabled)
+    if !args.no_service {
+        let wrapper_installer = FsWrapperInstaller::new(home.clone());
+        match wrapper_installer.install(args.force) {
+            Ok(path) => {
+                results.push(format!("\u{2714} wl-paste wrapper installed ({path})"));
+            }
+            Err(e) => {
+                eprintln!("error: wl-paste wrapper: {e}");
+                has_error = true;
+            }
+        }
+    }
+
     // Print results summary
     for line in &results {
         eprintln!("{line}");
@@ -95,6 +110,14 @@ fn run_init(args: cli::InitArgs) {
                 "  2. Verify: systemctl --user status {}",
                 systemd_unit::SERVICE_NAME.trim_end_matches(".service")
             );
+            // Show which wl-paste is resolved
+            if let Ok(output) = std::process::Command::new("which").arg("wl-paste").output() {
+                let resolved = String::from_utf8_lossy(&output.stdout);
+                let resolved = resolved.trim();
+                if !resolved.is_empty() {
+                    eprintln!("  3. wl-paste resolves to: {resolved}");
+                }
+            }
         }
     }
 
@@ -136,6 +159,23 @@ fn run_uninstall(args: cli::UninstallArgs) {
         }
     } else {
         results.push("- systemd service skipped (--no-service)".to_string());
+    }
+
+    // wl-paste wrapper removal
+    let wrapper_installer = FsWrapperInstaller::new(home.clone());
+    match wrapper_installer.uninstall() {
+        Ok(()) => {
+            if wrapper_installer.is_installed() {
+                // Should not happen, but guard
+                eprintln!("warning: wl-paste wrapper removal may have failed");
+            } else {
+                results.push("\u{2714} wl-paste wrapper removed".to_string());
+            }
+        }
+        Err(e) => {
+            eprintln!("error: wl-paste wrapper: {e}");
+            has_error = true;
+        }
     }
 
     // Print results summary
@@ -212,6 +252,23 @@ fn run_status() {
         Err(_) => {
             println!("  shell hook: unknown shell");
         }
+    }
+
+    // wl-paste wrapper status
+    let wrapper_installer = FsWrapperInstaller::new(home.clone());
+    if wrapper_installer.is_installed() {
+        let wrapper_path = domain::wl_paste_wrapper::wrapper_install_path(&home);
+        println!("  wl-paste wrapper: installed ({wrapper_path})");
+        // Show which wl-paste is resolved
+        if let Ok(output) = std::process::Command::new("which").arg("wl-paste").output() {
+            let resolved = String::from_utf8_lossy(&output.stdout);
+            let resolved = resolved.trim();
+            if !resolved.is_empty() {
+                println!("  wl-paste resolves to: {resolved}");
+            }
+        }
+    } else {
+        println!("  wl-paste wrapper: not installed");
     }
 
     // Latest image path
