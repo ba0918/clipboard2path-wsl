@@ -347,7 +347,7 @@ fn run_watch(args: WatchArgs) {
     let base_dir = if args.output_dir.as_os_str().is_empty() {
         runtime_dir.clone()
     } else {
-        match domain::path_gen::validate_output_dir(&args.output_dir) {
+        match infra::file_system::validate_output_dir(&args.output_dir) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("error: invalid output directory: {e}");

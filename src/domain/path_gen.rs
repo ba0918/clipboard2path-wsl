@@ -44,28 +44,16 @@ pub fn generate_save_path(base_dir: &Path, timestamp: &str) -> Result<PathBuf, P
     Ok(path)
 }
 
-/// Validate that an output directory exists and is safe.
+/// Validate path components for traversal attacks (pure function, no I/O).
 ///
-/// This function DOES touch the file system (canonicalize), so it belongs
-/// at the boundary between domain and infrastructure. It is kept here
-/// because the validation logic (traversal detection) is domain knowledge.
-pub fn validate_output_dir(path: &Path) -> Result<PathBuf, PathError> {
-    // Reject paths containing ".."
+/// Rejects paths containing `..` (parent directory) components.
+pub fn validate_path_components(path: &Path) -> Result<(), PathError> {
     for component in path.components() {
         if let std::path::Component::ParentDir = component {
             return Err(PathError::TraversalDetected);
         }
     }
-
-    let canonical = path
-        .canonicalize()
-        .map_err(|e| PathError::CanonicalizeFailed(e.to_string()))?;
-
-    if !canonical.is_dir() {
-        return Err(PathError::DirNotFound(canonical.display().to_string()));
-    }
-
-    Ok(canonical)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -109,24 +97,31 @@ mod tests {
         );
     }
 
-    // --- validate_output_dir tests ---
+    // --- validate_path_components tests ---
 
     #[test]
-    fn validates_existing_dir() {
-        // /tmp should always exist on Linux
-        let result = validate_output_dir(Path::new("/tmp"));
-        assert!(result.is_ok());
+    fn accepts_normal_path_components() {
+        assert!(validate_path_components(Path::new("/tmp/output")).is_ok());
+    }
+
+    #[test]
+    fn accepts_relative_path() {
+        assert!(validate_path_components(Path::new("output/dir")).is_ok());
     }
 
     #[test]
     fn rejects_traversal_components() {
-        let result = validate_output_dir(Path::new("/tmp/../etc"));
-        assert_eq!(result, Err(PathError::TraversalDetected));
+        assert_eq!(
+            validate_path_components(Path::new("/tmp/../etc")),
+            Err(PathError::TraversalDetected)
+        );
     }
 
     #[test]
-    fn rejects_nonexistent_dir() {
-        let result = validate_output_dir(Path::new("/nonexistent_dir_12345"));
-        assert!(matches!(result, Err(PathError::CanonicalizeFailed(_))));
+    fn rejects_only_dotdot() {
+        assert_eq!(
+            validate_path_components(Path::new("..")),
+            Err(PathError::TraversalDetected)
+        );
     }
 }

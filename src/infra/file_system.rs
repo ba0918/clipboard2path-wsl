@@ -21,6 +21,28 @@ pub trait FileWriter {
     fn write_bytes(&self, path: &Path, data: &[u8]) -> Result<(), FsError>;
 }
 
+/// Validate that an output directory exists and is safe.
+///
+/// Performs I/O (canonicalize, is_dir check), so it belongs in the infra layer.
+/// Delegates traversal detection to the domain layer's pure function.
+pub fn validate_output_dir(
+    path: &Path,
+) -> Result<std::path::PathBuf, crate::domain::path_gen::PathError> {
+    use crate::domain::path_gen::{validate_path_components, PathError};
+
+    validate_path_components(path)?;
+
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| PathError::CanonicalizeFailed(e.to_string()))?;
+
+    if !canonical.is_dir() {
+        return Err(PathError::DirNotFound(canonical.display().to_string()));
+    }
+
+    Ok(canonical)
+}
+
 /// Real file system implementation.
 ///
 /// Saves files with `0o600` permissions (owner read/write only).
@@ -73,6 +95,26 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn validate_output_dir_accepts_existing_dir() {
+        let result = validate_output_dir(Path::new("/tmp"));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_output_dir_rejects_traversal() {
+        use crate::domain::path_gen::PathError;
+        let result = validate_output_dir(Path::new("/tmp/../etc"));
+        assert_eq!(result, Err(PathError::TraversalDetected));
+    }
+
+    #[test]
+    fn validate_output_dir_rejects_nonexistent() {
+        use crate::domain::path_gen::PathError;
+        let result = validate_output_dir(Path::new("/nonexistent_dir_12345"));
+        assert!(matches!(result, Err(PathError::CanonicalizeFailed(_))));
     }
 
     #[test]
