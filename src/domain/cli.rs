@@ -5,6 +5,17 @@ use std::path::PathBuf;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Minimum polling interval in milliseconds.
+pub const MIN_INTERVAL_MS: u64 = 100;
+/// Maximum polling interval in milliseconds.
+pub const MAX_INTERVAL_MS: u64 = 60_000;
+/// Default polling interval in milliseconds.
+pub const DEFAULT_INTERVAL_MS: u64 = 500;
+/// Minimum number of files to keep.
+pub const MIN_MAX_FILES: usize = 1;
+/// Default number of files to keep.
+pub const DEFAULT_MAX_FILES: usize = 20;
+
 /// Verbosity level.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Verbosity {
@@ -49,9 +60,9 @@ impl Default for WatchArgs {
     fn default() -> Self {
         Self {
             once: false,
-            interval_ms: 500,
+            interval_ms: DEFAULT_INTERVAL_MS,
             output_dir: None,
-            max_files: 20,
+            max_files: DEFAULT_MAX_FILES,
             verbosity: Verbosity::Normal,
         }
     }
@@ -81,8 +92,17 @@ pub struct UninstallArgs {
 #[derive(Debug, PartialEq)]
 pub enum CliError {
     MissingValue(String),
-    InvalidValue { flag: String, value: String },
+    InvalidValue {
+        flag: String,
+        value: String,
+    },
     UnknownFlag(String),
+    OutOfRange {
+        flag: String,
+        min: String,
+        max: String,
+        actual: String,
+    },
 }
 
 impl fmt::Display for CliError {
@@ -93,6 +113,14 @@ impl fmt::Display for CliError {
                 write!(f, "invalid value '{value}' for {flag}")
             }
             CliError::UnknownFlag(flag) => write!(f, "unknown flag: {flag}"),
+            CliError::OutOfRange {
+                flag,
+                min,
+                max,
+                actual,
+            } => {
+                write!(f, "{flag} must be between {min} and {max} (got {actual})")
+            }
         }
     }
 }
@@ -163,6 +191,25 @@ fn parse_watch_args(args: &[String]) -> Result<Command, CliError> {
         i += 1;
     }
 
+    // Range validation
+    if result.interval_ms < MIN_INTERVAL_MS || result.interval_ms > MAX_INTERVAL_MS {
+        return Err(CliError::OutOfRange {
+            flag: "--interval".to_string(),
+            min: MIN_INTERVAL_MS.to_string(),
+            max: MAX_INTERVAL_MS.to_string(),
+            actual: result.interval_ms.to_string(),
+        });
+    }
+
+    if result.max_files < MIN_MAX_FILES {
+        return Err(CliError::OutOfRange {
+            flag: "--max-files".to_string(),
+            min: MIN_MAX_FILES.to_string(),
+            max: "unlimited".to_string(),
+            actual: result.max_files.to_string(),
+        });
+    }
+
     Ok(Command::Watch(result))
 }
 
@@ -227,9 +274,9 @@ COMMANDS:
 
 WATCH OPTIONS:
     --once              Run once and exit (no daemon loop)
-    --interval <ms>     Polling interval in ms (default: 500)
+    --interval <ms>     Polling interval in ms (100-60000, default: {DEFAULT_INTERVAL_MS})
     --output-dir <path> Output directory (default: $XDG_RUNTIME_DIR/clipboard2path)
-    --max-files <n>     Maximum files to keep (default: 20)
+    --max-files <n>     Maximum files to keep (min: {MIN_MAX_FILES}, default: {DEFAULT_MAX_FILES})
     --verbose           Show detailed output
     -q, --quiet         Suppress all non-error output
 
@@ -359,6 +406,68 @@ mod tests {
     fn unknown_flag() {
         let result = parse_args(&args(&["--unknown"]));
         assert_eq!(result, Err(CliError::UnknownFlag("--unknown".to_string())));
+    }
+
+    // --- Range validation ---
+
+    #[test]
+    fn interval_zero_rejected() {
+        let result = parse_args(&args(&["--interval", "0"]));
+        assert!(matches!(
+            result,
+            Err(CliError::OutOfRange { flag, .. }) if flag == "--interval"
+        ));
+    }
+
+    #[test]
+    fn interval_below_min_rejected() {
+        let result = parse_args(&args(&["--interval", "99"]));
+        assert!(matches!(
+            result,
+            Err(CliError::OutOfRange { flag, .. }) if flag == "--interval"
+        ));
+    }
+
+    #[test]
+    fn interval_at_min_accepted() {
+        let Command::Watch(w) = parse_args(&args(&["--interval", "100"])).unwrap() else {
+            panic!("expected Watch");
+        };
+        assert_eq!(w.interval_ms, 100);
+    }
+
+    #[test]
+    fn interval_above_max_rejected() {
+        let result = parse_args(&args(&["--interval", "60001"]));
+        assert!(matches!(
+            result,
+            Err(CliError::OutOfRange { flag, .. }) if flag == "--interval"
+        ));
+    }
+
+    #[test]
+    fn interval_at_max_accepted() {
+        let Command::Watch(w) = parse_args(&args(&["--interval", "60000"])).unwrap() else {
+            panic!("expected Watch");
+        };
+        assert_eq!(w.interval_ms, 60000);
+    }
+
+    #[test]
+    fn max_files_zero_rejected() {
+        let result = parse_args(&args(&["--max-files", "0"]));
+        assert!(matches!(
+            result,
+            Err(CliError::OutOfRange { flag, .. }) if flag == "--max-files"
+        ));
+    }
+
+    #[test]
+    fn max_files_one_accepted() {
+        let Command::Watch(w) = parse_args(&args(&["--max-files", "1"])).unwrap() else {
+            panic!("expected Watch");
+        };
+        assert_eq!(w.max_files, 1);
     }
 
     // --- Help / Version ---
