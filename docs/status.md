@@ -11,7 +11,7 @@
 | **Cycle ID** | `20260406204808` |
 | **Feature** | wl-paste ラッパー（Claude Code 画像ペースト対応） |
 | **Started** | 2026-04-06 20:48:08 |
-| **Phase** | 🔵 Implementing |
+| **Phase** | 🟢 Complete |
 | **Plan** | [docs/plans/20260406204808_powershell-png-and-wlpaste-wrapper.md](./plans/20260406204808_powershell-png-and-wlpaste-wrapper.md) |
 
 **Current Focus:**
