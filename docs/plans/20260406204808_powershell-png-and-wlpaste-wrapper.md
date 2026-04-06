@@ -208,7 +208,7 @@ WSLg の wl-paste を完全バイパスし、Windows の .NET API (`System.Windo
 | 3 | `infra/wrapper_installer.rs` — マーカーベースインストール/アンインストール + ディレクトリ作成 | 🟢 |
 | 4 | `main.rs` — init/uninstall/status にラッパー統合 + PATH 表示 | 🟢 |
 | 5 | CLAUDE.md 更新 | 🟢 |
-| 6 | テスト（ユニット + bash 統合） | ⚪ |
+| 6 | テスト（ユニット + bash 統合） | 🟢 |
 | 7 | 手動検証（Claude Code で Alt+V） | ⚪ |
 
 **Legend:** ⚪ Pending · 🟡 In Progress · 🟢 Done
