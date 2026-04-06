@@ -344,16 +344,15 @@ fn run_watch(args: WatchArgs) {
     };
 
     // Determine output directory: explicit --output-dir overrides runtime_dir
-    let base_dir = if args.output_dir.as_os_str().is_empty() {
-        runtime_dir.clone()
-    } else {
-        match infra::file_system::validate_output_dir(&args.output_dir) {
+    let base_dir = match args.output_dir {
+        None => runtime_dir.clone(),
+        Some(ref dir) => match infra::file_system::validate_output_dir(dir) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("error: invalid output directory: {e}");
                 process::exit(1);
             }
-        }
+        },
     };
 
     // Daemon lifecycle: setup directory

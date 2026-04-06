@@ -37,8 +37,8 @@ pub struct WatchArgs {
     pub once: bool,
     /// Polling interval in milliseconds.
     pub interval_ms: u64,
-    /// Output directory for saved PNGs (empty = use runtime dir).
-    pub output_dir: PathBuf,
+    /// Output directory for saved PNGs (None = use runtime dir).
+    pub output_dir: Option<PathBuf>,
     /// Maximum number of files to keep.
     pub max_files: usize,
     /// Verbosity level.
@@ -50,7 +50,7 @@ impl Default for WatchArgs {
         Self {
             once: false,
             interval_ms: 500,
-            output_dir: PathBuf::from(""), // empty = use $XDG_RUNTIME_DIR/clipboard2path/
+            output_dir: None,
             max_files: 20,
             verbosity: Verbosity::Normal,
         }
@@ -144,7 +144,7 @@ fn parse_watch_args(args: &[String]) -> Result<Command, CliError> {
                 let val = args
                     .get(i)
                     .ok_or_else(|| CliError::MissingValue("--output-dir".to_string()))?;
-                result.output_dir = PathBuf::from(val);
+                result.output_dir = Some(PathBuf::from(val));
             }
             "--max-files" => {
                 i += 1;
@@ -228,7 +228,7 @@ COMMANDS:
 WATCH OPTIONS:
     --once              Run once and exit (no daemon loop)
     --interval <ms>     Polling interval in ms (default: 500)
-    --output-dir <path> Output directory (default: $XDG_RUNTIME_DIR/clipboard2path/)
+    --output-dir <path> Output directory (default: $XDG_RUNTIME_DIR/clipboard2path)
     --max-files <n>     Maximum files to keep (default: 20)
     --verbose           Show detailed output
     -q, --quiet         Suppress all non-error output
@@ -269,7 +269,7 @@ mod tests {
         };
         assert!(!w.once);
         assert_eq!(w.interval_ms, 500);
-        assert_eq!(w.output_dir, PathBuf::from(""));
+        assert_eq!(w.output_dir, None);
         assert_eq!(w.max_files, 20);
     }
 
@@ -295,7 +295,7 @@ mod tests {
         else {
             panic!("expected Watch");
         };
-        assert_eq!(w.output_dir, PathBuf::from("/home/user/images"));
+        assert_eq!(w.output_dir, Some(PathBuf::from("/home/user/images")));
     }
 
     #[test]
