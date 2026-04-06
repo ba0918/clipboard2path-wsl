@@ -3,6 +3,7 @@ pub mod cli;
 pub mod clipboard_change;
 pub mod image_convert;
 pub mod path_gen;
+pub mod path_validate;
 pub mod runtime_dir;
 pub mod shell_detect;
 pub mod shell_hook;

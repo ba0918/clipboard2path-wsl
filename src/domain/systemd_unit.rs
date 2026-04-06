@@ -1,5 +1,7 @@
 //! Systemd unit file generation (pure functions).
 
+use super::path_validate::{self, PathValidateError};
+
 /// Service name constant.
 pub const SERVICE_NAME: &str = "clipboard2path.service";
 
@@ -7,8 +9,13 @@ pub const SERVICE_NAME: &str = "clipboard2path.service";
 ///
 /// Pure function: takes the executable path and user ID,
 /// returns a complete unit file as a string.
-pub fn generate_unit(exec_path: &str, uid: u32) -> String {
-    format!(
+///
+/// Returns an error if `exec_path` contains characters that are unsafe
+/// for embedding in a systemd unit file.
+pub fn generate_unit(exec_path: &str, uid: u32) -> Result<String, PathValidateError> {
+    path_validate::validate_safe_path(exec_path)?;
+
+    Ok(format!(
         "[Unit]
 Description=clipboard2path-wsl — clipboard image to file path daemon
 After=graphical-session.target
@@ -24,7 +31,7 @@ Environment=XDG_RUNTIME_DIR=/run/user/{uid}
 [Install]
 WantedBy=default.target
 "
-    )
+    ))
 }
 
 /// Return the install path for the systemd unit file.
@@ -64,7 +71,7 @@ mod tests {
 
     #[test]
     fn generate_unit_contains_all_sections() {
-        let unit = generate_unit("/usr/local/bin/clipboard2path-wsl", 1000);
+        let unit = generate_unit("/usr/local/bin/clipboard2path-wsl", 1000).unwrap();
         assert!(unit.contains("[Unit]"));
         assert!(unit.contains("[Service]"));
         assert!(unit.contains("[Install]"));
@@ -72,27 +79,39 @@ mod tests {
 
     #[test]
     fn generate_unit_contains_exec_path() {
-        let unit = generate_unit("/opt/bin/my-tool", 1000);
+        let unit = generate_unit("/opt/bin/my-tool", 1000).unwrap();
         assert!(unit.contains("ExecStart=/opt/bin/my-tool"));
     }
 
     #[test]
     fn generate_unit_contains_wayland_display() {
-        let unit = generate_unit("/bin/test", 1000);
+        let unit = generate_unit("/bin/test", 1000).unwrap();
         assert!(unit.contains("Environment=WAYLAND_DISPLAY=wayland-0"));
     }
 
     #[test]
     fn generate_unit_contains_xdg_runtime_dir_with_uid() {
-        let unit = generate_unit("/bin/test", 1234);
+        let unit = generate_unit("/bin/test", 1234).unwrap();
         assert!(unit.contains("Environment=XDG_RUNTIME_DIR=/run/user/1234"));
     }
 
     #[test]
     fn generate_unit_has_correct_uid_in_runtime_dir() {
-        let unit = generate_unit("/bin/test", 5000);
+        let unit = generate_unit("/bin/test", 5000).unwrap();
         assert!(unit.contains("/run/user/5000"));
         assert!(!unit.contains("/run/user/1000"));
+    }
+
+    #[test]
+    fn generate_unit_rejects_unsafe_exec_path() {
+        let result = generate_unit("/path/with$var", 1000);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn generate_unit_rejects_percent_in_exec_path() {
+        let result = generate_unit("/path/with%n", 1000);
+        assert!(result.is_err());
     }
 
     #[test]

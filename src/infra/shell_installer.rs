@@ -122,26 +122,21 @@ fn install_rc_hook(
     let rc_path = shell_hook::hook_install_path(shell, home);
     let existing = std::fs::read_to_string(&rc_path).unwrap_or_default();
 
+    let source_line = shell_hook::generate_source_line(&hook_file)
+        .map_err(|e| InstallError::IoError(format!("unsafe hook file path: {e}")))?;
+
     if existing.contains(shell_hook::HOOK_MARKER) {
         if !force {
             return Err(InstallError::AlreadyExists(rc_path));
         }
         // Remove existing hook lines before re-adding
         let cleaned = remove_hook_lines(&existing);
-        let new_content = format!(
-            "{}\n{}",
-            cleaned.trim_end(),
-            shell_hook::generate_source_line(&hook_file)
-        );
+        let new_content = format!("{}\n{}", cleaned.trim_end(), source_line);
         std::fs::write(&rc_path, new_content)
             .map_err(|e| InstallError::IoError(format!("failed to write {rc_path}: {e}")))?;
     } else {
         // Append to rc file
-        let new_content = format!(
-            "{}\n{}",
-            existing.trim_end(),
-            shell_hook::generate_source_line(&hook_file)
-        );
+        let new_content = format!("{}\n{}", existing.trim_end(), source_line);
         std::fs::write(&rc_path, new_content)
             .map_err(|e| InstallError::IoError(format!("failed to write {rc_path}: {e}")))?;
     }

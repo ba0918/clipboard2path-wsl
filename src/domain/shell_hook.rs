@@ -88,8 +88,14 @@ pub fn hook_install_path(shell: ShellType, home_dir: &str) -> String {
 pub const HOOK_MARKER: &str = "# clipboard2path-wsl shell hook";
 
 /// Generate the source line to add to .bashrc/.zshrc.
-pub fn generate_source_line(hook_file: &str) -> String {
-    format!("{HOOK_MARKER}\nsource \"{hook_file}\"\n")
+///
+/// Returns an error if `hook_file` contains characters that are unsafe
+/// for embedding in a shell source command.
+pub fn generate_source_line(
+    hook_file: &str,
+) -> Result<String, super::path_validate::PathValidateError> {
+    super::path_validate::validate_safe_path(hook_file)?;
+    Ok(format!("{HOOK_MARKER}\nsource \"{hook_file}\"\n"))
 }
 
 #[cfg(test)]
@@ -141,8 +147,20 @@ mod tests {
 
     #[test]
     fn source_line_contains_marker() {
-        let line = generate_source_line("/path/to/hook.sh");
+        let line = generate_source_line("/path/to/hook.sh").unwrap();
         assert!(line.contains(HOOK_MARKER));
         assert!(line.contains("source \"/path/to/hook.sh\""));
+    }
+
+    #[test]
+    fn source_line_rejects_unsafe_path() {
+        let result = generate_source_line("/path/with$var");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn source_line_rejects_backtick_path() {
+        let result = generate_source_line("/path/`cmd`");
+        assert!(result.is_err());
     }
 }

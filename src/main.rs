@@ -203,7 +203,8 @@ fn install_systemd_service(home: &str) -> Result<(), String> {
         .map_err(|e| format!("failed to parse UID: {e}"))?;
 
     // Generate unit file content
-    let unit_content = systemd_unit::generate_unit(&exec_path_str, uid);
+    let unit_content = systemd_unit::generate_unit(&exec_path_str, uid)
+        .map_err(|e| format!("binary path contains unsafe characters: {e}"))?;
 
     // Install via systemd installer
     let runner = RealCommandRunner;
