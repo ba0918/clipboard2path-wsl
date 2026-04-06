@@ -6,16 +6,7 @@
 
 ## 🎯 Current Session
 
-| Field | Value |
-|-------|-------|
-| **Cycle ID** | `20260406222223` |
-| **Feature** | コードベースレビュー改善（88点→95点目標） |
-| **Started** | 2026-04-06 22:22:23 |
-| **Phase** | 🟢 Complete |
-| **Plan** | [docs/plans/20260406222223_codebase-review-improvements.md](./plans/20260406222223_codebase-review-improvements.md) |
-
-**Current Focus:**
-MEDIUM 6件 + 主要 LOW 8件を一括改善し、コードベース品質スコアを向上させる
+_No active session_
 
 ---
 
@@ -25,6 +16,9 @@ _Archived sessions can be found in [session-history.md](./session-history.md)._
 
 ## Completed Plans
 
+- **[コードベースレビュー改善](plans/20260406222223_codebase-review-improvements.md)** — 🟢 complete
+  - 8 steps, 10 commits, 181 tests (35 new), MEDIUM 6件 + LOW 8件解消
+  - [Result](plans/results/20260406222223_codebase-review-improvements_result.md)
 - **[wl-paste ラッパー](plans/20260406204808_powershell-png-and-wlpaste-wrapper.md)** — 🟢 complete
   - 6 steps, 6 commits, 146 tests (21 new Rust + 10 bash integration)
   - [Result](plans/results/20260406204808_powershell-png-and-wlpaste-wrapper_result.md)

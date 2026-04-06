@@ -1,5 +1,12 @@
 # Session History
 
+## 2026-04-06: コードベースレビュー改善（88点→目標95点）
+- **Cycle ID:** `20260406222223`
+- **Plan:** [codebase-review-improvements](plans/20260406222223_codebase-review-improvements.md)
+- **Result:** [result](plans/results/20260406222223_codebase-review-improvements_result.md)
+- **Status:** 🟢 Complete
+- 8 steps, 10 commits, 181 tests (35 new), MEDIUM 6件 + LOW 8件解消
+
 ## 2026-04-06: wl-paste ラッパー（Claude Code 画像ペースト対応）
 - **Cycle ID:** `20260406204808`
 - **Plan:** [powershell-png-and-wlpaste-wrapper](plans/20260406204808_powershell-png-and-wlpaste-wrapper.md)
