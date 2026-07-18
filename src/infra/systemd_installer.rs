@@ -110,26 +110,30 @@ impl<R: CommandRunner> SystemdInstaller for FsSystemdInstaller<R> {
     }
 
     fn is_active(&self) -> Result<String, String> {
-        // is-active returns non-zero for inactive/failed, but we want the output regardless
-        match self.runner.run(
+        // `systemctl is-active` prints the state to stdout and encodes it in the exit
+        // code (0 = active, non-zero = inactive/failed/...). run_capturing() preserves
+        // both, so we judge on the terminal state instead of parsing an error string.
+        let output = self.runner.run_capturing(
             "systemctl",
             &["--user", "is-active", systemd_unit::SERVICE_NAME],
-        ) {
-            Ok(output) => Ok(output),
-            Err(e) => {
-                // systemctl is-active returns exit code 3 for "inactive", which our runner
-                // treats as error. Extract the meaningful part.
-                if e.contains("inactive") || e.contains("failed") || e.contains("activating") {
-                    // Parse out the status word from the error
-                    for word in ["inactive", "failed", "activating"] {
-                        if e.contains(word) {
-                            return Ok(word.to_string());
-                        }
-                    }
-                }
-                Ok("unknown".to_string())
+        )?;
+
+        if output.exit_code == Some(0) {
+            return Ok("active".to_string());
+        }
+
+        for state in ["inactive", "failed", "activating"] {
+            if output.stdout == state {
+                return Ok(state.to_string());
             }
         }
+
+        // An unexpected termination (unknown state word, or a signal kill) must not be
+        // silently reported as "unknown"; surface a diagnostic the caller can act on.
+        Err(format!(
+            "unexpected 'systemctl is-active' result (exit_code: {:?}, stdout: {:?}, stderr: {:?})",
+            output.exit_code, output.stdout, output.stderr
+        ))
     }
 
     fn is_installed(&self, home: &str) -> bool {
@@ -141,6 +145,7 @@ impl<R: CommandRunner> SystemdInstaller for FsSystemdInstaller<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infra::command_runner::CommandOutput;
     use crate::infra::command_runner::testing::MockCommandRunner;
 
     #[test]
@@ -296,18 +301,138 @@ mod tests {
     }
 
     #[test]
-    fn is_active_returns_active() {
-        let mock = MockCommandRunner::new(vec![Ok("active".to_string())]);
+    fn is_active_exit_zero_is_active() {
+        let mock = MockCommandRunner::new(vec![]).with_capturing(vec![Ok(CommandOutput {
+            exit_code: Some(0),
+            stdout: "active".to_string(),
+            stderr: String::new(),
+        })]);
         let installer = FsSystemdInstaller::new(mock);
         assert_eq!(installer.is_active(), Ok("active".to_string()));
     }
 
     #[test]
-    fn is_active_returns_inactive_from_error() {
-        let mock = MockCommandRunner::new(vec![Err(
-            "'systemctl' exited with exit status: 3: inactive".to_string(),
-        )]);
+    fn is_active_exit3_stdout_inactive_is_inactive() {
+        let mock = MockCommandRunner::new(vec![]).with_capturing(vec![Ok(CommandOutput {
+            exit_code: Some(3),
+            stdout: "inactive".to_string(),
+            stderr: String::new(),
+        })]);
         let installer = FsSystemdInstaller::new(mock);
         assert_eq!(installer.is_active(), Ok("inactive".to_string()));
+    }
+
+    #[test]
+    fn is_active_exit3_stdout_failed_is_failed() {
+        let mock = MockCommandRunner::new(vec![]).with_capturing(vec![Ok(CommandOutput {
+            exit_code: Some(3),
+            stdout: "failed".to_string(),
+            stderr: String::new(),
+        })]);
+        let installer = FsSystemdInstaller::new(mock);
+        assert_eq!(installer.is_active(), Ok("failed".to_string()));
+    }
+
+    #[test]
+    fn is_active_unknown_state_returns_diagnostic_error() {
+        let mock = MockCommandRunner::new(vec![]).with_capturing(vec![Ok(CommandOutput {
+            exit_code: Some(4),
+            stdout: String::new(),
+            stderr: "Failed to connect to bus".to_string(),
+        })]);
+        let installer = FsSystemdInstaller::new(mock);
+        let result = installer.is_active();
+        assert!(
+            result.is_err(),
+            "unknown state must not be silent 'unknown'"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains('4'),
+            "diagnostic must include exit code: {msg}"
+        );
+        assert!(
+            msg.contains("Failed to connect to bus"),
+            "diagnostic must include stderr: {msg}"
+        );
+    }
+
+    #[test]
+    fn is_active_signal_termination_returns_diagnostic_error() {
+        let mock = MockCommandRunner::new(vec![]).with_capturing(vec![Ok(CommandOutput {
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+        })]);
+        let installer = FsSystemdInstaller::new(mock);
+        assert!(installer.is_active().is_err());
+    }
+
+    #[test]
+    fn is_active_spawn_failure_propagates_error() {
+        let mock = MockCommandRunner::new(vec![])
+            .with_capturing(vec![Err("failed to execute 'systemctl'".to_string())]);
+        let installer = FsSystemdInstaller::new(mock);
+        assert!(installer.is_active().is_err());
+    }
+
+    #[test]
+    fn install_enable_non_zero_returns_install_error() {
+        let tmp = std::env::temp_dir().join("clipboard2path_test_install_enable_fail");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let home = tmp.to_string_lossy().to_string();
+
+        let mock = MockCommandRunner::new(vec![
+            Ok(String::new()),                // daemon-reload
+            Err("enable failed".to_string()), // enable --now
+        ]);
+        let installer = FsSystemdInstaller::new(mock);
+        assert!(matches!(
+            installer.install("content", &home),
+            Err(InstallError::CommandError(_))
+        ));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn install_daemon_reload_non_zero_returns_install_error() {
+        let tmp = std::env::temp_dir().join("clipboard2path_test_install_reload_fail");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let home = tmp.to_string_lossy().to_string();
+
+        let mock = MockCommandRunner::new(vec![
+            Err("reload failed".to_string()), // daemon-reload
+        ]);
+        let installer = FsSystemdInstaller::new(mock);
+        assert!(matches!(
+            installer.install("content", &home),
+            Err(InstallError::CommandError(_))
+        ));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn uninstall_daemon_reload_non_zero_returns_install_error() {
+        let tmp = std::env::temp_dir().join("clipboard2path_test_uninstall_reload_fail");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let home = tmp.to_string_lossy().to_string();
+
+        let mock = MockCommandRunner::new(vec![
+            Err("stop failed".to_string()),    // stop — ignored
+            Err("disable failed".to_string()), // disable — ignored
+            Err("reload failed".to_string()),  // daemon-reload — propagates
+        ]);
+        let installer = FsSystemdInstaller::new(mock);
+        assert!(matches!(
+            installer.uninstall(&home),
+            Err(InstallError::CommandError(_))
+        ));
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 }
