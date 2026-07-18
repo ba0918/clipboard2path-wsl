@@ -14,6 +14,7 @@ use domain::runtime_dir;
 use domain::shell_detect;
 use domain::systemd_unit;
 use domain::wsl_detect;
+use infra::change_signal::{ChangeSignal, X11ChangeSignal};
 use infra::clipboard::WlClipboard;
 use infra::command_runner::RealCommandRunner;
 use infra::file_system::RealFileWriter;
@@ -210,7 +211,11 @@ fn read_latest_image() -> Option<String> {
     let dir = runtime_dir::resolve_runtime_dir(xdg.as_deref()).ok()?;
     let content = std::fs::read_to_string(dir.join("latest-path")).ok()?;
     let path = content.trim().to_string();
-    if path.is_empty() { None } else { Some(path) }
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
+    }
 }
 
 /// Resolve shell type from an explicit name, or auto-detect ($SHELL + login shell).
@@ -314,16 +319,43 @@ fn run_watch(args: WatchArgs) {
 
     if args.once {
         run_once(&service, &base_dir, verbosity);
-    } else {
-        run_cleanup(&base_dir, args.max_files, verbosity);
-        run_daemon(
-            &service,
-            &base_dir,
-            args.interval_ms,
-            args.max_files,
-            verbosity,
-        );
+        return;
     }
+
+    run_cleanup(&base_dir, args.max_files, verbosity);
+
+    let mut seed_baseline = false;
+    if !args.poll {
+        match X11ChangeSignal::connect() {
+            Ok(mut signal) => {
+                run_event_daemon(&service, &mut signal, &base_dir, args.max_files, verbosity);
+                // run_event_daemon returns only when the X11 connection is lost
+                // (e.g. XWayland restart) — degrade to polling instead of dying.
+                log_info(
+                    verbosity,
+                    "daemon: event signal lost, falling back to polling",
+                );
+                // The event path already converted the current clipboard;
+                // without a baseline, polling's first pass would save it again.
+                seed_baseline = true;
+            }
+            Err(e) => {
+                log_info(
+                    verbosity,
+                    &format!("daemon: X11 event mode unavailable ({e}), falling back to polling"),
+                );
+            }
+        }
+    }
+
+    run_daemon(
+        &service,
+        &base_dir,
+        args.interval_ms,
+        args.max_files,
+        verbosity,
+        seed_baseline,
+    );
 }
 
 /// Log a message at Normal+ verbosity.
@@ -391,12 +423,15 @@ fn run_cleanup(base_dir: &Path, max_files: usize, verbosity: Verbosity) {
     }
 }
 
+/// Run the polling loop. With `seed_baseline`, the current clipboard state is
+/// treated as already processed (used when taking over from the event path).
 fn run_daemon<C, F, T, N>(
     service: &ConvertService<C, F, T, N>,
     base_dir: &Path,
     interval_ms: u64,
     max_files: usize,
     verbosity: Verbosity,
+    seed_baseline: bool,
 ) where
     C: infra::clipboard::ClipboardReader,
     F: infra::file_system::FileWriter,
@@ -405,7 +440,11 @@ fn run_daemon<C, F, T, N>(
 {
     let poll_interval = Duration::from_millis(interval_ms);
 
-    let mut previous_types: Vec<String> = Vec::new();
+    let mut previous_types: Vec<String> = if seed_baseline {
+        service.reader().list_types().unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     log_info(
         verbosity,
@@ -417,24 +456,67 @@ fn run_daemon<C, F, T, N>(
 
     loop {
         let result = daemon::poll_once(service, &mut previous_types, base_dir);
-
-        match result {
-            PollResult::Converted(path) => {
-                log_info(verbosity, &format!("saved: {}", path.display()));
-                run_cleanup(base_dir, max_files, verbosity);
-            }
-            PollResult::ConvertError(e) => {
-                eprintln!("error: {e}");
-            }
-            PollResult::ClipboardError(e) => {
-                eprintln!("clipboard error: {e}");
-            }
-            PollResult::NoBmpImage => {
-                log_verbose(verbosity, "skipped: no BMP image in clipboard");
-            }
-            PollResult::NoChange => {}
-        }
-
+        report_poll_result(result, base_dir, max_files, verbosity);
         thread::sleep(poll_interval);
+    }
+}
+
+fn run_event_daemon<C, F, T, N, S>(
+    service: &ConvertService<C, F, T, N>,
+    signal: &mut S,
+    base_dir: &Path,
+    max_files: usize,
+    verbosity: Verbosity,
+) where
+    C: infra::clipboard::ClipboardReader,
+    F: infra::file_system::FileWriter,
+    T: service::converter::TimestampProvider,
+    N: infra::path_notifier::PathNotifier,
+    S: ChangeSignal,
+{
+    log_info(
+        verbosity,
+        &format!(
+            "daemon: watching clipboard (event-driven via XFixes, output: {})",
+            base_dir.display()
+        ),
+    );
+
+    // An image copied before startup has no future event to announce it —
+    // process the current clipboard state once.
+    let initial = daemon::on_change_event(service, base_dir);
+    report_poll_result(initial, base_dir, max_files, verbosity);
+
+    loop {
+        match signal.wait_change() {
+            Ok(()) => {
+                let result = daemon::on_change_event(service, base_dir);
+                report_poll_result(result, base_dir, max_files, verbosity);
+            }
+            Err(e) => {
+                eprintln!("event signal error: {e}");
+                return;
+            }
+        }
+    }
+}
+
+/// Log a poll result and run cleanup after successful conversions.
+fn report_poll_result(result: PollResult, base_dir: &Path, max_files: usize, verbosity: Verbosity) {
+    match result {
+        PollResult::Converted(path) => {
+            log_info(verbosity, &format!("saved: {}", path.display()));
+            run_cleanup(base_dir, max_files, verbosity);
+        }
+        PollResult::ConvertError(e) => {
+            eprintln!("error: {e}");
+        }
+        PollResult::ClipboardError(e) => {
+            eprintln!("clipboard error: {e}");
+        }
+        PollResult::NoBmpImage => {
+            log_verbose(verbosity, "skipped: no BMP image in clipboard");
+        }
+        PollResult::NoChange => {}
     }
 }

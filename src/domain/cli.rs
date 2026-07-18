@@ -46,6 +46,8 @@ pub enum Command {
 pub struct WatchArgs {
     /// Run in single-shot mode (no daemon loop).
     pub once: bool,
+    /// Force polling mode (skip X11 event-driven detection).
+    pub poll: bool,
     /// Polling interval in milliseconds.
     pub interval_ms: u64,
     /// Output directory for saved PNGs (None = use runtime dir).
@@ -60,6 +62,7 @@ impl Default for WatchArgs {
     fn default() -> Self {
         Self {
             once: false,
+            poll: false,
             interval_ms: DEFAULT_INTERVAL_MS,
             output_dir: None,
             max_files: DEFAULT_MAX_FILES,
@@ -157,6 +160,7 @@ fn parse_watch_args(args: &[String]) -> Result<Command, CliError> {
     while i < args.len() {
         match args[i].as_str() {
             "--once" => result.once = true,
+            "--poll" => result.poll = true,
             "--interval" => {
                 i += 1;
                 let val = args
@@ -274,6 +278,7 @@ COMMANDS:
 
 WATCH OPTIONS:
     --once              Run once and exit (no daemon loop)
+    --poll              Force polling mode (default: X11 event-driven, polling fallback)
     --interval <ms>     Polling interval in ms (100-60000, default: {DEFAULT_INTERVAL_MS})
     --output-dir <path> Output directory (default: $XDG_RUNTIME_DIR/clipboard2path)
     --max-files <n>     Maximum files to keep (min: {MIN_MAX_FILES}, default: {DEFAULT_MAX_FILES})
@@ -326,6 +331,22 @@ mod tests {
             panic!("expected Watch");
         };
         assert!(w.once);
+    }
+
+    #[test]
+    fn poll_flag() {
+        let Command::Watch(w) = parse_args(&args(&["--poll"])).unwrap() else {
+            panic!("expected Watch");
+        };
+        assert!(w.poll);
+    }
+
+    #[test]
+    fn event_driven_is_default() {
+        let Command::Watch(w) = parse_args(&[]).unwrap() else {
+            panic!("expected Watch");
+        };
+        assert!(!w.poll);
     }
 
     #[test]

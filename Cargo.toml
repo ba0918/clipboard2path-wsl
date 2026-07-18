@@ -12,6 +12,7 @@ categories = ["command-line-utilities"]
 [dependencies]
 ctrlc = "3"
 image = { version = "0.25", default-features = false, features = ["bmp", "png"] }
+x11rb = { version = "0.14.0", features = ["xfixes"] }
 
 [profile.release]
 opt-level = "z"

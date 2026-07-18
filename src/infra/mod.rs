@@ -1,5 +1,6 @@
 //! Infrastructure layer: I/O implementations behind trait abstractions.
 
+pub mod change_signal;
 pub mod clipboard;
 pub mod command_runner;
 pub mod file_system;
