@@ -383,7 +383,7 @@ fn run_cleanup(base_dir: &Path, max_files: usize, verbosity: Verbosity) {
     };
 
     // Sort oldest first, then remove excess by count
-    entries.sort_by(|a, b| b.age.cmp(&a.age));
+    entries.sort_by_key(|e| std::cmp::Reverse(e.age));
 
     for path in cleanup::files_to_clean_by_count(&entries, max_files) {
         let _ = std::fs::remove_file(&path);
