@@ -21,3 +21,9 @@ CLAUDE.local.md
 # Added by cargo
 
 /target
+
+# Claude Code work files
+.claude/tmp/
+
+# Review reports (local only, not for publication)
+docs/reviews/
