@@ -388,7 +388,13 @@ fn run_watch(args: WatchArgs) {
         run_once(&service, &base_dir, verbosity);
     } else {
         run_cleanup(&base_dir, args.max_files, verbosity);
-        run_daemon(&service, &base_dir, args.interval_ms, verbosity);
+        run_daemon(
+            &service,
+            &base_dir,
+            args.interval_ms,
+            args.max_files,
+            verbosity,
+        );
     }
 }
 
@@ -461,6 +467,7 @@ fn run_daemon<C, F, T, N>(
     service: &ConvertService<C, F, T, N>,
     base_dir: &Path,
     interval_ms: u64,
+    max_files: usize,
     verbosity: Verbosity,
 ) where
     C: infra::clipboard::ClipboardReader,
@@ -486,6 +493,7 @@ fn run_daemon<C, F, T, N>(
         match result {
             PollResult::Converted(path) => {
                 log_info(verbosity, &format!("saved: {}", path.display()));
+                run_cleanup(base_dir, max_files, verbosity);
             }
             PollResult::ConvertError(e) => {
                 eprintln!("error: {e}");

@@ -75,7 +75,7 @@ impl TimestampProvider for SystemTimestamp {
         let duration = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default();
-        format!("{}", duration.as_secs())
+        format!("{}", duration.as_millis())
     }
 }
 
@@ -152,6 +152,14 @@ mod tests {
     use std::cell::RefCell;
     use std::io::Cursor;
     use std::path::PathBuf;
+
+    #[test]
+    fn system_timestamp_has_millisecond_precision() {
+        let ts: u128 = SystemTimestamp.now().parse().expect("numeric timestamp");
+        // Millisecond epoch (13+ digits); second precision (10 digits) would
+        // collide when two images are saved within the same second
+        assert!(ts > 1_000_000_000_000);
+    }
 
     // --- Mock implementations ---
 
