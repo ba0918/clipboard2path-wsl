@@ -27,3 +27,6 @@ CLAUDE.local.md
 
 # Review reports (local only, not for publication)
 docs/reviews/
+
+# Wiki skill playground (local only)
+.wiki/
