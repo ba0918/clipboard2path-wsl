@@ -18,6 +18,7 @@ use infra::clipboard::WlClipboard;
 use infra::command_runner::RealCommandRunner;
 use infra::file_system::RealFileWriter;
 use infra::lifecycle::{DaemonLifecycle, FsDaemonLifecycle};
+use infra::login_shell::fetch_login_shell;
 use infra::shell_installer::FsShellInstaller;
 use infra::systemd_installer::FsSystemdInstaller;
 use infra::wrapper_installer::{FsWrapperInstaller, WrapperInstaller};
@@ -187,8 +188,7 @@ fn run_status() {
     );
 
     // Env I/O resolved here; SetupService only queries the installers.
-    let shell_env = std::env::var("SHELL").unwrap_or_default();
-    let shell = shell_detect::detect_shell(&shell_env).ok();
+    let shell = detect_shell_auto().ok();
 
     let wl_paste_resolved = if wrapper_installer.is_installed() {
         resolve_wl_paste_path()
@@ -213,7 +213,7 @@ fn read_latest_image() -> Option<String> {
     if path.is_empty() { None } else { Some(path) }
 }
 
-/// Resolve shell type from explicit name or $SHELL env var.
+/// Resolve shell type from an explicit name, or auto-detect ($SHELL + login shell).
 fn resolve_shell(name: Option<&str>) -> shell_detect::ShellType {
     match name {
         Some(n) => match shell_detect::parse_shell_name(n) {
@@ -223,17 +223,31 @@ fn resolve_shell(name: Option<&str>) -> shell_detect::ShellType {
                 process::exit(1);
             }
         },
-        None => {
-            let shell_env = std::env::var("SHELL").unwrap_or_default();
-            match shell_detect::detect_shell(&shell_env) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    process::exit(1);
-                }
+        None => match detect_shell_auto() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error: {e}");
+                process::exit(1);
             }
-        }
+        },
     }
+}
+
+/// Auto-detect the shell from `$SHELL`, falling back to the login shell (`getent`).
+///
+/// Unifies init / uninstall / status on the same resolution rule.
+fn detect_shell_auto() -> Result<shell_detect::ShellType, shell_detect::ShellDetectError> {
+    let env_shell = std::env::var("SHELL").unwrap_or_default();
+    let login = current_username().and_then(|user| fetch_login_shell(&RealCommandRunner, &user));
+    shell_detect::resolve_shell_with_fallback(&env_shell, login.as_deref())
+}
+
+/// Determine the current username from the environment (for the `getent` lookup).
+fn current_username() -> Option<String> {
+    std::env::var("USER")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("LOGNAME").ok().filter(|s| !s.is_empty()))
 }
 
 fn run_watch(args: WatchArgs) {
