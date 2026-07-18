@@ -18,11 +18,12 @@ use infra::clipboard::WlClipboard;
 use infra::command_runner::RealCommandRunner;
 use infra::file_system::RealFileWriter;
 use infra::lifecycle::{DaemonLifecycle, FsDaemonLifecycle};
-use infra::shell_installer::{FsShellInstaller, ShellInstaller};
-use infra::systemd_installer::{FsSystemdInstaller, SystemdInstaller};
+use infra::shell_installer::FsShellInstaller;
+use infra::systemd_installer::FsSystemdInstaller;
 use infra::wrapper_installer::{FsWrapperInstaller, WrapperInstaller};
 use service::converter::{ConvertService, SystemTimestamp};
 use service::daemon::{self, PollResult};
+use service::setup::SetupService;
 
 fn main() {
     // Parse CLI arguments
@@ -52,56 +53,32 @@ fn main() {
 fn run_init(args: cli::InitArgs) {
     let shell = resolve_shell(args.shell.as_deref());
     let home = resolve_home();
-    let mut has_error = false;
-    let mut results: Vec<String> = Vec::new();
 
-    // Shell hook installation (force=true for idempotent updates)
     let shell_installer = FsShellInstaller::new(home.clone());
-    match shell_installer.install(shell, true) {
-        Ok(_path) => {
-            results.push(format!("\u{2714} shell hook installed ({shell})"));
-        }
-        Err(e) => {
-            eprintln!("error: shell hook: {e}");
-            has_error = true;
-        }
-    }
+    let systemd_installer = FsSystemdInstaller::new(RealCommandRunner);
+    let wrapper_installer = FsWrapperInstaller::new(home.clone());
+    let setup = SetupService::new(
+        &shell_installer,
+        &systemd_installer,
+        &wrapper_installer,
+        home.clone(),
+    );
 
-    // Systemd service installation
-    if !args.no_service {
-        match install_systemd_service(&home) {
-            Ok(()) => {
-                results.push("\u{2714} systemd service installed and started".to_string());
-            }
-            Err(e) => {
-                eprintln!("error: systemd service: {e}");
-                has_error = true;
-            }
-        }
+    // Generate the systemd unit (env I/O) only when the service is enabled.
+    let unit_content: Result<String, String> = if args.no_service {
+        Ok(String::new())
     } else {
-        results.push("- systemd service skipped (--no-service)".to_string());
-    }
+        generate_unit_content()
+    };
+    let unit_ref: Result<&str, &str> = match &unit_content {
+        Ok(s) => Ok(s.as_str()),
+        Err(e) => Err(e.as_str()),
+    };
 
-    // wl-paste wrapper installation (only when service is enabled)
-    if !args.no_service {
-        let wrapper_installer = FsWrapperInstaller::new(home.clone());
-        match wrapper_installer.install(args.force) {
-            Ok(path) => {
-                results.push(format!("\u{2714} wl-paste wrapper installed ({path})"));
-            }
-            Err(e) => {
-                eprintln!("error: wl-paste wrapper: {e}");
-                has_error = true;
-            }
-        }
-    }
+    let outcome = setup.run_init(shell, args.no_service, args.force, unit_ref);
+    print_setup_outcome(&outcome);
 
-    // Print results summary
-    for line in &results {
-        eprintln!("{line}");
-    }
-
-    if !has_error {
+    if !outcome.has_error {
         eprintln!();
         eprintln!("Next steps:");
         eprintln!("  1. Restart your shell (or run: exec $SHELL)");
@@ -117,7 +94,7 @@ fn run_init(args: cli::InitArgs) {
         }
     }
 
-    if has_error {
+    if outcome.has_error {
         process::exit(1);
     }
 }
@@ -125,67 +102,38 @@ fn run_init(args: cli::InitArgs) {
 fn run_uninstall(args: cli::UninstallArgs) {
     let shell = resolve_shell(args.shell.as_deref());
     let home = resolve_home();
-    let mut has_error = false;
-    let mut results: Vec<String> = Vec::new();
 
-    // Shell hook removal
     let shell_installer = FsShellInstaller::new(home.clone());
-    match shell_installer.uninstall(shell) {
-        Ok(_path) => {
-            results.push(format!("\u{2714} shell hook removed ({shell})"));
-        }
-        Err(e) => {
-            eprintln!("error: shell hook: {e}");
-            has_error = true;
-        }
-    }
-
-    // Systemd service removal
-    if !args.no_service {
-        let runner = RealCommandRunner;
-        let systemd_installer = FsSystemdInstaller::new(runner);
-        match systemd_installer.uninstall(&home) {
-            Ok(()) => {
-                results.push("\u{2714} systemd service stopped and removed".to_string());
-            }
-            Err(e) => {
-                eprintln!("error: systemd service: {e}");
-                has_error = true;
-            }
-        }
-    } else {
-        results.push("- systemd service skipped (--no-service)".to_string());
-    }
-
-    // wl-paste wrapper removal
+    let systemd_installer = FsSystemdInstaller::new(RealCommandRunner);
     let wrapper_installer = FsWrapperInstaller::new(home.clone());
-    match wrapper_installer.uninstall() {
-        Ok(()) => {
-            if wrapper_installer.is_installed() {
-                // Should not happen, but guard
-                eprintln!("warning: wl-paste wrapper removal may have failed");
-            } else {
-                results.push("\u{2714} wl-paste wrapper removed".to_string());
-            }
-        }
-        Err(e) => {
-            eprintln!("error: wl-paste wrapper: {e}");
-            has_error = true;
-        }
-    }
+    let setup = SetupService::new(
+        &shell_installer,
+        &systemd_installer,
+        &wrapper_installer,
+        home.clone(),
+    );
 
-    // Print results summary
-    for line in &results {
-        eprintln!("{line}");
-    }
+    let outcome = setup.run_uninstall(shell, args.no_service);
+    print_setup_outcome(&outcome);
 
-    if has_error {
+    if outcome.has_error {
         process::exit(1);
     }
 }
 
-/// Install the systemd user service.
-fn install_systemd_service(home: &str) -> Result<(), String> {
+/// Print an init/uninstall outcome to stderr: errors first (as processing produced
+/// them), then the result summary — the ordering the CLI has always used.
+fn print_setup_outcome(outcome: &service::setup::SetupOutcome) {
+    for line in &outcome.errors {
+        eprintln!("{line}");
+    }
+    for line in &outcome.results {
+        eprintln!("{line}");
+    }
+}
+
+/// Generate the systemd unit file content from the running environment.
+fn generate_unit_content() -> Result<String, String> {
     // Get binary path
     let exec_path = std::env::current_exe()
         .and_then(|p| p.canonicalize())
@@ -199,15 +147,8 @@ fn install_systemd_service(home: &str) -> Result<(), String> {
         .map_err(|e| format!("failed to parse UID: {e}"))?;
 
     // Generate unit file content
-    let unit_content = systemd_unit::generate_unit(&exec_path_str, uid)
-        .map_err(|e| format!("binary path contains unsafe characters: {e}"))?;
-
-    // Install via systemd installer
-    let runner = RealCommandRunner;
-    let installer = FsSystemdInstaller::new(runner);
-    installer
-        .install(&unit_content, home)
-        .map_err(|e| e.to_string())
+    systemd_unit::generate_unit(&exec_path_str, uid)
+        .map_err(|e| format!("binary path contains unsafe characters: {e}"))
 }
 
 /// Resolve the path that `which wl-paste` returns.
@@ -235,68 +176,41 @@ fn resolve_home() -> String {
 fn run_status() {
     let home = resolve_home();
 
-    println!("clipboard2path-wsl status:");
-
-    // Service status
-    let runner = RealCommandRunner;
-    let systemd = FsSystemdInstaller::new(runner);
-    if systemd.is_installed(&home) {
-        match systemd.is_active() {
-            Ok(status) => println!("  service: {status}"),
-            Err(e) => println!("  service: error ({e})"),
-        }
-    } else {
-        println!("  service: not installed");
-    }
-
-    // Shell hook status
-    let shell_env = std::env::var("SHELL").unwrap_or_default();
     let shell_installer = FsShellInstaller::new(home.clone());
-    match shell_detect::detect_shell(&shell_env) {
-        Ok(shell) => {
-            if shell_installer.is_installed(shell) {
-                println!("  shell hook: installed ({shell})");
-            } else {
-                println!("  shell hook: not installed");
-            }
-        }
-        Err(_) => {
-            println!("  shell hook: unknown shell");
-        }
-    }
-
-    // wl-paste wrapper status
+    let systemd_installer = FsSystemdInstaller::new(RealCommandRunner);
     let wrapper_installer = FsWrapperInstaller::new(home.clone());
-    if wrapper_installer.is_installed() {
-        let wrapper_path = domain::wl_paste_wrapper::wrapper_install_path(&home);
-        println!("  wl-paste wrapper: installed ({wrapper_path})");
-        // Show which wl-paste is resolved
-        if let Some(resolved) = resolve_wl_paste_path() {
-            println!("  wl-paste resolves to: {resolved}");
-        }
-    } else {
-        println!("  wl-paste wrapper: not installed");
-    }
+    let setup = SetupService::new(
+        &shell_installer,
+        &systemd_installer,
+        &wrapper_installer,
+        home.clone(),
+    );
 
-    // Latest image path
-    let xdg = std::env::var("XDG_RUNTIME_DIR").ok();
-    match runtime_dir::resolve_runtime_dir(xdg.as_deref()) {
-        Ok(dir) => {
-            let latest_path = dir.join("latest-path");
-            match std::fs::read_to_string(&latest_path) {
-                Ok(content) => {
-                    let path = content.trim();
-                    if path.is_empty() {
-                        println!("  latest image: (none)");
-                    } else {
-                        println!("  latest image: {path}");
-                    }
-                }
-                Err(_) => println!("  latest image: (none)"),
-            }
-        }
-        Err(_) => println!("  latest image: (none)"),
+    // Env I/O resolved here; SetupService only queries the installers.
+    let shell_env = std::env::var("SHELL").unwrap_or_default();
+    let shell = shell_detect::detect_shell(&shell_env).ok();
+
+    let wl_paste_resolved = if wrapper_installer.is_installed() {
+        resolve_wl_paste_path()
+    } else {
+        None
+    };
+
+    let latest_image = read_latest_image();
+
+    let lines = setup.run_status(shell, wl_paste_resolved.as_deref(), latest_image.as_deref());
+    for line in &lines {
+        println!("{line}");
     }
+}
+
+/// Read the latest saved image path from the runtime directory, if any.
+fn read_latest_image() -> Option<String> {
+    let xdg = std::env::var("XDG_RUNTIME_DIR").ok();
+    let dir = runtime_dir::resolve_runtime_dir(xdg.as_deref()).ok()?;
+    let content = std::fs::read_to_string(dir.join("latest-path")).ok()?;
+    let path = content.trim().to_string();
+    if path.is_empty() { None } else { Some(path) }
 }
 
 /// Resolve shell type from explicit name or $SHELL env var.
