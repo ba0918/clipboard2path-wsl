@@ -14,6 +14,9 @@ Thumbs.db
 # Personal Claude config
 CLAUDE.local.md
 
+# Agent artifact store (local visibility)
+/.agents/artifacts/
+
 
 # Added by cargo
 
