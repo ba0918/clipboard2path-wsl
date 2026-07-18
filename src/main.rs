@@ -211,11 +211,7 @@ fn read_latest_image() -> Option<String> {
     let dir = runtime_dir::resolve_runtime_dir(xdg.as_deref()).ok()?;
     let content = std::fs::read_to_string(dir.join("latest-path")).ok()?;
     let path = content.trim().to_string();
-    if path.is_empty() {
-        None
-    } else {
-        Some(path)
-    }
+    if path.is_empty() { None } else { Some(path) }
 }
 
 /// Resolve shell type from an explicit name, or auto-detect ($SHELL + login shell).

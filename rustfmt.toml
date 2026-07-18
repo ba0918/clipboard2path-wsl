@@ -1,0 +1,5 @@
+# Pinned explicitly: the default style_edition resolution differs between
+# toolchain setups (CI resolved 2015 while a local 1.97.1 resolved 2024),
+# making `cargo fmt -- --check` results environment-dependent without this.
+edition = "2024"
+style_edition = "2024"

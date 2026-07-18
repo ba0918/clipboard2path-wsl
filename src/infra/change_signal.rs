@@ -14,9 +14,9 @@ use std::thread;
 use std::time::Duration;
 
 use x11rb::connection::Connection;
+use x11rb::protocol::Event;
 use x11rb::protocol::xfixes::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::ConnectionExt as _;
-use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 
 /// How long to wait after the first event before draining the burst.
