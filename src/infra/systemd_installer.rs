@@ -2,7 +2,6 @@
 
 use std::fmt;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use crate::domain::systemd_unit;
@@ -52,19 +51,9 @@ impl<R: CommandRunner> SystemdInstaller for FsSystemdInstaller<R> {
         let path = systemd_unit::unit_install_path(home);
         let path_ref = Path::new(&path);
 
-        // Create parent directory
-        if let Some(parent) = path_ref.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| InstallError::IoError(format!("failed to create directory: {e}")))?;
-        }
-
-        // Write unit file
-        fs::write(path_ref, unit_content)
-            .map_err(|e| InstallError::IoError(format!("failed to write {path}: {e}")))?;
-
-        // Set permissions to 0o644
-        fs::set_permissions(path_ref, fs::Permissions::from_mode(0o644))
-            .map_err(|e| InstallError::IoError(format!("failed to set permissions: {e}")))?;
+        // Atomically write the unit file with 0o644 permissions.
+        crate::infra::file_system::install_file(path_ref, unit_content.as_bytes(), 0o644)
+            .map_err(|e| InstallError::IoError(e.to_string()))?;
 
         // daemon-reload
         self.runner
@@ -147,6 +136,7 @@ mod tests {
     use super::*;
     use crate::infra::command_runner::CommandOutput;
     use crate::infra::command_runner::testing::MockCommandRunner;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn install_creates_dir_writes_file_and_runs_commands() {

@@ -1,8 +1,6 @@
 //! Shell hook file installation/removal.
 
 use std::fmt;
-use std::fs::Permissions;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use crate::domain::shell_detect::ShellType;
@@ -92,18 +90,8 @@ fn install_fish_hook(home: &str, content: &str, force: bool) -> Result<String, I
         return Err(InstallError::AlreadyExists(target));
     }
 
-    // Ensure parent directory exists
-    if let Some(parent) = target_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| InstallError::IoError(format!("failed to create directory: {e}")))?;
-    }
-
-    std::fs::write(target_path, content)
-        .map_err(|e| InstallError::IoError(format!("failed to write {target}: {e}")))?;
-
-    std::fs::set_permissions(target_path, Permissions::from_mode(0o644)).map_err(|e| {
-        InstallError::IoError(format!("failed to set permissions on {target}: {e}"))
-    })?;
+    crate::infra::file_system::install_file(target_path, content.as_bytes(), 0o644)
+        .map_err(|e| InstallError::IoError(e.to_string()))?;
 
     Ok(target)
 }
@@ -115,18 +103,10 @@ fn install_rc_hook(
     content: &str,
     force: bool,
 ) -> Result<String, InstallError> {
-    // Write the hook script to a dedicated file
-    let hook_dir = format!("{home}/.config/clipboard2path");
-    std::fs::create_dir_all(&hook_dir)
-        .map_err(|e| InstallError::IoError(format!("failed to create directory: {e}")))?;
-
-    let hook_file = format!("{hook_dir}/hook.{shell}");
-    std::fs::write(&hook_file, content)
-        .map_err(|e| InstallError::IoError(format!("failed to write {hook_file}: {e}")))?;
-
-    std::fs::set_permissions(Path::new(&hook_file), Permissions::from_mode(0o644)).map_err(
-        |e| InstallError::IoError(format!("failed to set permissions on {hook_file}: {e}")),
-    )?;
+    // Write the hook script to a dedicated file (atomically, 0o644).
+    let hook_file = format!("{home}/.config/clipboard2path/hook.{shell}");
+    crate::infra::file_system::install_file(Path::new(&hook_file), content.as_bytes(), 0o644)
+        .map_err(|e| InstallError::IoError(e.to_string()))?;
 
     // Add source line to rc file
     let rc_path = shell_hook::hook_install_path(shell, home);

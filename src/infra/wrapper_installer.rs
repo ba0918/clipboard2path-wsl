@@ -63,25 +63,10 @@ impl WrapperInstaller for FsWrapperInstaller {
             return Err(WrapperError::ExistingNonManaged(install_path));
         }
 
-        // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| WrapperError::IoError(format!("failed to create directory: {e}")))?;
-        }
-
-        // Generate and write the wrapper script
+        // Atomically write the wrapper script with executable (0o755) permissions.
         let script = wl_paste_wrapper::generate_wrapper(wl_paste_wrapper::DEFAULT_REAL_WL_PASTE);
-        std::fs::write(path, &script)
-            .map_err(|e| WrapperError::IoError(format!("failed to write {install_path}: {e}")))?;
-
-        // Set executable permissions
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o755);
-            std::fs::set_permissions(path, perms)
-                .map_err(|e| WrapperError::IoError(format!("failed to set permissions: {e}")))?;
-        }
+        crate::infra::file_system::install_file(path, script.as_bytes(), 0o755)
+            .map_err(|e| WrapperError::IoError(e.to_string()))?;
 
         Ok(install_path)
     }
