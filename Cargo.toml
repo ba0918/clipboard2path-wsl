@@ -1,6 +1,6 @@
 [package]
 name = "clipboard2path-wsl"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "Save clipboard images to files on WSL2 and paste their paths via shell hooks, without touching the Windows clipboard"
 license = "MIT"
