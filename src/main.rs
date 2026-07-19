@@ -14,6 +14,7 @@ use domain::runtime_dir;
 use domain::shell_detect;
 use domain::systemd_unit;
 use domain::wsl_detect;
+use infra::change_signal::X11ChangeSignal;
 use infra::clipboard::WlClipboard;
 use infra::command_runner::RealCommandRunner;
 use infra::file_system::RealFileWriter;
@@ -23,8 +24,9 @@ use infra::shell_installer::FsShellInstaller;
 use infra::systemd_installer::FsSystemdInstaller;
 use infra::wrapper_installer::{FsWrapperInstaller, WrapperInstaller};
 use service::converter::{ConvertService, SystemTimestamp};
-use service::daemon::{self, PollResult};
+use service::daemon::PollResult;
 use service::setup::SetupService;
+use service::watch::{WatchNotice, run_watch_loop};
 
 fn main() {
     // Parse CLI arguments
@@ -314,16 +316,70 @@ fn run_watch(args: WatchArgs) {
 
     if args.once {
         run_once(&service, &base_dir, verbosity);
-    } else {
-        run_cleanup(&base_dir, args.max_files, verbosity);
-        run_daemon(
-            &service,
-            &base_dir,
-            args.interval_ms,
-            args.max_files,
-            verbosity,
-        );
+        return;
     }
+
+    run_cleanup(&base_dir, args.max_files, verbosity);
+
+    let interval_ms = args.interval_ms;
+    let max_files = args.max_files;
+    let report_dir = base_dir.clone();
+    // Retry failures repeat every backoff period — Normal only for the one
+    // that puts us into polling, Verbose for the rest.
+    let mut reported_fallback = false;
+    let observer = move |notice: WatchNotice<'_>| {
+        match notice {
+            WatchNotice::EventModeEntered => {
+                reported_fallback = false;
+                log_info(
+                    verbosity,
+                    &format!(
+                        "daemon: watching clipboard (event-driven via XFixes, output: {})",
+                        report_dir.display()
+                    ),
+                );
+            }
+            WatchNotice::PollingModeEntered => {
+                log_info(
+                    verbosity,
+                    &format!(
+                        "daemon: watching clipboard (interval: {interval_ms}ms, output: {})",
+                        report_dir.display()
+                    ),
+                );
+            }
+            WatchNotice::ConnectFailed(e) => {
+                if reported_fallback {
+                    log_verbose(verbosity, &format!("daemon: X11 reconnect failed ({e})"));
+                } else {
+                    reported_fallback = true;
+                    log_info(
+                        verbosity,
+                        &format!(
+                            "daemon: X11 event mode unavailable ({e}), falling back to polling"
+                        ),
+                    );
+                }
+            }
+            WatchNotice::EventSignalLost(e) => {
+                eprintln!("event signal error: {e}");
+            }
+            WatchNotice::Polled(result) => {
+                report_poll_result(result, &report_dir, max_files, verbosity);
+            }
+        }
+        std::ops::ControlFlow::Continue(())
+    };
+
+    run_watch_loop(
+        &service,
+        &base_dir,
+        Duration::from_millis(interval_ms),
+        args.poll,
+        X11ChangeSignal::connect,
+        thread::sleep,
+        observer,
+    );
 }
 
 /// Log a message at Normal+ verbosity.
@@ -391,50 +447,27 @@ fn run_cleanup(base_dir: &Path, max_files: usize, verbosity: Verbosity) {
     }
 }
 
-fn run_daemon<C, F, T, N>(
-    service: &ConvertService<C, F, T, N>,
+/// Log a poll result and run cleanup after successful conversions.
+fn report_poll_result(
+    result: &PollResult,
     base_dir: &Path,
-    interval_ms: u64,
     max_files: usize,
     verbosity: Verbosity,
-) where
-    C: infra::clipboard::ClipboardReader,
-    F: infra::file_system::FileWriter,
-    T: service::converter::TimestampProvider,
-    N: infra::path_notifier::PathNotifier,
-{
-    let poll_interval = Duration::from_millis(interval_ms);
-
-    let mut previous_types: Vec<String> = Vec::new();
-
-    log_info(
-        verbosity,
-        &format!(
-            "daemon: watching clipboard (interval: {interval_ms}ms, output: {})",
-            base_dir.display()
-        ),
-    );
-
-    loop {
-        let result = daemon::poll_once(service, &mut previous_types, base_dir);
-
-        match result {
-            PollResult::Converted(path) => {
-                log_info(verbosity, &format!("saved: {}", path.display()));
-                run_cleanup(base_dir, max_files, verbosity);
-            }
-            PollResult::ConvertError(e) => {
-                eprintln!("error: {e}");
-            }
-            PollResult::ClipboardError(e) => {
-                eprintln!("clipboard error: {e}");
-            }
-            PollResult::NoBmpImage => {
-                log_verbose(verbosity, "skipped: no BMP image in clipboard");
-            }
-            PollResult::NoChange => {}
+) {
+    match result {
+        PollResult::Converted(path) => {
+            log_info(verbosity, &format!("saved: {}", path.display()));
+            run_cleanup(base_dir, max_files, verbosity);
         }
-
-        thread::sleep(poll_interval);
+        PollResult::ConvertError(e) => {
+            eprintln!("error: {e}");
+        }
+        PollResult::ClipboardError(e) => {
+            eprintln!("clipboard error: {e}");
+        }
+        PollResult::NoBmpImage => {
+            log_verbose(verbosity, "skipped: no BMP image in clipboard");
+        }
+        PollResult::NoChange => {}
     }
 }

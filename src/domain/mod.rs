@@ -1,5 +1,6 @@
 //! Domain layer: pure business logic with no I/O dependencies.
 
+pub mod backoff;
 pub mod cleanup;
 pub mod cli;
 pub mod clipboard_change;

@@ -22,6 +22,61 @@ impl ClipboardReader for MockClipboardReader {
     }
 }
 
+/// Reader whose type listing always fails (e.g. wl-paste unavailable).
+pub struct FailingListClipboardReader;
+
+impl ClipboardReader for FailingListClipboardReader {
+    fn read_image_bmp(&self) -> Result<Vec<u8>, ClipboardError> {
+        Err(ClipboardError::CommandFailed {
+            tool: "mock".to_string(),
+            stderr: "read failed".to_string(),
+        })
+    }
+
+    fn list_types(&self) -> Result<Vec<String>, ClipboardError> {
+        Err(ClipboardError::CommandFailed {
+            tool: "mock".to_string(),
+            stderr: "list failed".to_string(),
+        })
+    }
+}
+
+/// Reader backed by shared mutable state, so a test can change the
+/// "clipboard content" while a watch loop is running (via callbacks).
+pub struct SharedClipboardReader {
+    pub types: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    pub bmp_data: Vec<u8>,
+}
+
+impl ClipboardReader for SharedClipboardReader {
+    fn read_image_bmp(&self) -> Result<Vec<u8>, ClipboardError> {
+        Ok(self.bmp_data.clone())
+    }
+
+    fn list_types(&self) -> Result<Vec<String>, ClipboardError> {
+        Ok(self.types.borrow().clone())
+    }
+}
+
+/// Notifier that records notify/clear calls for assertions.
+pub struct RecordingPathNotifier {
+    pub events: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+}
+
+impl PathNotifier for RecordingPathNotifier {
+    fn notify(&self, path: &Path) -> Result<(), NotifyError> {
+        self.events
+            .borrow_mut()
+            .push(format!("notify:{}", path.display()));
+        Ok(())
+    }
+
+    fn clear(&self) -> Result<(), NotifyError> {
+        self.events.borrow_mut().push("clear".to_string());
+        Ok(())
+    }
+}
+
 pub struct MockFileWriter;
 
 impl FileWriter for MockFileWriter {

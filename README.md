@@ -17,7 +17,7 @@ to shell hooks through files instead.
 
 ## How it works
 
-1. Watches the clipboard (polling, using `wl-paste` only)
+1. Watches the clipboard — event-driven via X11 XFixes owner-change notifications, falling back to polling (`wl-paste` only) when X11 is unavailable
 2. Grabs the image (BMP) when one is detected
 3. Converts it to PNG and saves it under `$XDG_RUNTIME_DIR/clipboard2path/`
 4. Updates the `latest-path` file and the `latest.png` symlink
@@ -88,8 +88,14 @@ clipboard2path-wsl status
 clipboard2path-wsl
 ```
 
-Polls the clipboard every 500ms and saves each detected image to
+Watches the clipboard and saves each detected image to
 `$XDG_RUNTIME_DIR/clipboard2path/clipboard-{timestamp}.png`.
+
+Detection is event-driven (X11 XFixes selection notifications — near-zero
+latency, zero idle wakeups). When no X server is reachable, the daemon falls
+back to polling at `--interval` (default 500ms) and keeps retrying the X11
+connection with capped exponential backoff (1s doubling up to 60s), returning
+to event mode automatically once it succeeds.
 
 ### One-shot
 
@@ -117,6 +123,7 @@ COMMANDS:
 
 WATCH OPTIONS:
     --once              Run once (no daemon loop)
+    --poll              Force polling mode (default: X11 event-driven, polling fallback)
     --interval <ms>     Polling interval in ms (100-60000, default: 500)
     --output-dir <path> Output directory (default: $XDG_RUNTIME_DIR/clipboard2path/)
     --max-files <n>     Maximum number of files to keep (min: 1, default: 20)
@@ -167,8 +174,8 @@ SIGTERM/SIGINT trigger a clean shutdown (runtime directory cleanup).
 ## Building
 
 ```bash
-cargo build --release    # Release build (~670KB)
-cargo test               # Run tests (181 tests)
+cargo build --release    # Release build (~800KB)
+cargo test               # Run tests (233 tests)
 cargo clippy             # Lint
 ```
 
@@ -181,6 +188,7 @@ src/
     image_convert.rs       #   BMP -> PNG conversion
     path_gen.rs            #   Output path generation
     wsl_detect.rs          #   WSL2 environment detection
+    backoff.rs             #   Reconnect backoff schedule
     clipboard_change.rs    #   Clipboard change detection
     runtime_dir.rs         #   Runtime directory resolution
     cleanup.rs             #   Temporary file cleanup
@@ -191,6 +199,7 @@ src/
     systemd_unit.rs        #   systemd unit file generation
     wl_paste_wrapper.rs    #   wl-paste wrapper script generation
   infra/                   # I/O layer (abstracted behind traits)
+    change_signal.rs       #   Event-driven change detection (X11 XFixes)
     clipboard.rs           #   wl-paste invocation (read-only)
     command_runner.rs      #   External command execution abstraction
     file_system.rs         #   File writing
@@ -201,7 +210,8 @@ src/
     wrapper_installer.rs   #   wl-paste wrapper installation (marker-based ownership check)
   service/                 # Orchestration
     converter.rs           #   Conversion flow
-    daemon.rs              #   Polling loop
+    daemon.rs              #   Single-observation logic (poll / event)
+    watch.rs               #   Event ⇄ polling state machine with reconnect
 ```
 
 - **Domain layer**: All pure functions. Zero external dependencies.
@@ -211,6 +221,7 @@ src/
 ## Design highlights
 
 - **Clipboard is never written**: Uses `wl-paste` only. The Windows clipboard is untouched.
+- **Event-driven detection**: Subscribes to X11 XFixes CLIPBOARD owner-change notifications (WSLg mirrors every Windows-side copy to X11), so images are detected near-instantly with zero idle wakeups. Only the notification comes from X11 — data still flows read-only through `wl-paste`. Falls back to polling when X11 is unavailable and reconnects automatically with capped exponential backoff.
 - **File-based path notification**: `latest-path` file + `latest.png` symlink.
 - **Atomic updates**: Temp file -> rename keeps both the path file and the symlink update safe.
 - **Shell hook integration**: Alt+V inserts the path for an image clipboard, or performs a normal paste for text.
