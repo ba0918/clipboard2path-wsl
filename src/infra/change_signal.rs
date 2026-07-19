@@ -67,8 +67,14 @@ impl X11ChangeSignal {
     /// Fails when no X server is reachable or XFixes is unavailable — the
     /// caller is expected to fall back to polling.
     pub fn connect() -> Result<Self, SignalError> {
-        let (conn, screen_num) =
-            x11rb::connect(None).map_err(|e| SignalError::new("X11 connect failed", e))?;
+        // Not just connect(None): systemd user services don't inherit
+        // $DISPLAY from the login session, so under the shipped unit the
+        // variable is unset and event mode would silently degrade to
+        // polling. WSLg's X display is always :0 and this tool refuses to
+        // run outside WSL2, so a fixed fallback display is sound.
+        let (conn, screen_num) = x11rb::connect(None)
+            .or_else(|_| x11rb::connect(Some(":0")))
+            .map_err(|e| SignalError::new("X11 connect failed", e))?;
         let root = conn.setup().roots[screen_num].root;
 
         // Version negotiation is mandatory before any other XFixes request.
