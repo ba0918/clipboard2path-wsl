@@ -14,7 +14,7 @@ use domain::runtime_dir;
 use domain::shell_detect;
 use domain::systemd_unit;
 use domain::wsl_detect;
-use infra::change_signal::{ChangeSignal, X11ChangeSignal};
+use infra::change_signal::X11ChangeSignal;
 use infra::clipboard::WlClipboard;
 use infra::command_runner::RealCommandRunner;
 use infra::file_system::RealFileWriter;
@@ -24,8 +24,9 @@ use infra::shell_installer::FsShellInstaller;
 use infra::systemd_installer::FsSystemdInstaller;
 use infra::wrapper_installer::{FsWrapperInstaller, WrapperInstaller};
 use service::converter::{ConvertService, SystemTimestamp};
-use service::daemon::{self, PollResult};
+use service::daemon::PollResult;
 use service::setup::SetupService;
+use service::watch::{WatchNotice, run_watch_loop};
 
 fn main() {
     // Parse CLI arguments
@@ -320,37 +321,64 @@ fn run_watch(args: WatchArgs) {
 
     run_cleanup(&base_dir, args.max_files, verbosity);
 
-    let mut seed_baseline = false;
-    if !args.poll {
-        match X11ChangeSignal::connect() {
-            Ok(mut signal) => {
-                run_event_daemon(&service, &mut signal, &base_dir, args.max_files, verbosity);
-                // run_event_daemon returns only when the X11 connection is lost
-                // (e.g. XWayland restart) — degrade to polling instead of dying.
+    let interval_ms = args.interval_ms;
+    let max_files = args.max_files;
+    let report_dir = base_dir.clone();
+    // Retry failures repeat every backoff period — Normal only for the one
+    // that puts us into polling, Verbose for the rest.
+    let mut reported_fallback = false;
+    let observer = move |notice: WatchNotice<'_>| {
+        match notice {
+            WatchNotice::EventModeEntered => {
+                reported_fallback = false;
                 log_info(
                     verbosity,
-                    "daemon: event signal lost, falling back to polling",
+                    &format!(
+                        "daemon: watching clipboard (event-driven via XFixes, output: {})",
+                        report_dir.display()
+                    ),
                 );
-                // The event path already converted the current clipboard;
-                // without a baseline, polling's first pass would save it again.
-                seed_baseline = true;
             }
-            Err(e) => {
+            WatchNotice::PollingModeEntered => {
                 log_info(
                     verbosity,
-                    &format!("daemon: X11 event mode unavailable ({e}), falling back to polling"),
+                    &format!(
+                        "daemon: watching clipboard (interval: {interval_ms}ms, output: {})",
+                        report_dir.display()
+                    ),
                 );
+            }
+            WatchNotice::ConnectFailed(e) => {
+                if reported_fallback {
+                    log_verbose(verbosity, &format!("daemon: X11 reconnect failed ({e})"));
+                } else {
+                    reported_fallback = true;
+                    log_info(
+                        verbosity,
+                        &format!(
+                            "daemon: X11 event mode unavailable ({e}), falling back to polling"
+                        ),
+                    );
+                }
+            }
+            WatchNotice::EventSignalLost(e) => {
+                eprintln!("event signal error: {e}");
+            }
+            WatchNotice::Polled(result) => {
+                report_poll_result(result, &report_dir, max_files, verbosity);
             }
         }
-    }
+        std::ops::ControlFlow::Continue(())
+    };
 
-    run_daemon(
+    run_watch_loop(
         &service,
         &base_dir,
-        args.interval_ms,
-        args.max_files,
-        verbosity,
-        seed_baseline,
+        Duration::from_millis(interval_ms),
+        args.poll,
+        X11ChangeSignal::connect,
+        thread::sleep,
+        observer,
     );
 }
 
@@ -419,86 +447,13 @@ fn run_cleanup(base_dir: &Path, max_files: usize, verbosity: Verbosity) {
     }
 }
 
-/// Run the polling loop. With `seed_baseline`, the current clipboard state is
-/// treated as already processed (used when taking over from the event path).
-fn run_daemon<C, F, T, N>(
-    service: &ConvertService<C, F, T, N>,
-    base_dir: &Path,
-    interval_ms: u64,
-    max_files: usize,
-    verbosity: Verbosity,
-    seed_baseline: bool,
-) where
-    C: infra::clipboard::ClipboardReader,
-    F: infra::file_system::FileWriter,
-    T: service::converter::TimestampProvider,
-    N: infra::path_notifier::PathNotifier,
-{
-    let poll_interval = Duration::from_millis(interval_ms);
-
-    let mut previous_types: Vec<String> = if seed_baseline {
-        service.reader().list_types().unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-
-    log_info(
-        verbosity,
-        &format!(
-            "daemon: watching clipboard (interval: {interval_ms}ms, output: {})",
-            base_dir.display()
-        ),
-    );
-
-    loop {
-        let result = daemon::poll_once(service, &mut previous_types, base_dir);
-        report_poll_result(result, base_dir, max_files, verbosity);
-        thread::sleep(poll_interval);
-    }
-}
-
-fn run_event_daemon<C, F, T, N, S>(
-    service: &ConvertService<C, F, T, N>,
-    signal: &mut S,
-    base_dir: &Path,
-    max_files: usize,
-    verbosity: Verbosity,
-) where
-    C: infra::clipboard::ClipboardReader,
-    F: infra::file_system::FileWriter,
-    T: service::converter::TimestampProvider,
-    N: infra::path_notifier::PathNotifier,
-    S: ChangeSignal,
-{
-    log_info(
-        verbosity,
-        &format!(
-            "daemon: watching clipboard (event-driven via XFixes, output: {})",
-            base_dir.display()
-        ),
-    );
-
-    // An image copied before startup has no future event to announce it —
-    // process the current clipboard state once.
-    let initial = daemon::on_change_event(service, base_dir);
-    report_poll_result(initial, base_dir, max_files, verbosity);
-
-    loop {
-        match signal.wait_change() {
-            Ok(()) => {
-                let result = daemon::on_change_event(service, base_dir);
-                report_poll_result(result, base_dir, max_files, verbosity);
-            }
-            Err(e) => {
-                eprintln!("event signal error: {e}");
-                return;
-            }
-        }
-    }
-}
-
 /// Log a poll result and run cleanup after successful conversions.
-fn report_poll_result(result: PollResult, base_dir: &Path, max_files: usize, verbosity: Verbosity) {
+fn report_poll_result(
+    result: &PollResult,
+    base_dir: &Path,
+    max_files: usize,
+    verbosity: Verbosity,
+) {
     match result {
         PollResult::Converted(path) => {
             log_info(verbosity, &format!("saved: {}", path.display()));

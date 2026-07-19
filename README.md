@@ -93,7 +93,9 @@ Watches the clipboard and saves each detected image to
 
 Detection is event-driven (X11 XFixes selection notifications — near-zero
 latency, zero idle wakeups). When no X server is reachable, the daemon falls
-back to polling at `--interval` (default 500ms).
+back to polling at `--interval` (default 500ms) and keeps retrying the X11
+connection with capped exponential backoff (1s doubling up to 60s), returning
+to event mode automatically once it succeeds.
 
 ### One-shot
 
@@ -186,6 +188,7 @@ src/
     image_convert.rs       #   BMP -> PNG conversion
     path_gen.rs            #   Output path generation
     wsl_detect.rs          #   WSL2 environment detection
+    backoff.rs             #   Reconnect backoff schedule
     clipboard_change.rs    #   Clipboard change detection
     runtime_dir.rs         #   Runtime directory resolution
     cleanup.rs             #   Temporary file cleanup
@@ -207,7 +210,8 @@ src/
     wrapper_installer.rs   #   wl-paste wrapper installation (marker-based ownership check)
   service/                 # Orchestration
     converter.rs           #   Conversion flow
-    daemon.rs              #   Polling loop
+    daemon.rs              #   Single-observation logic (poll / event)
+    watch.rs               #   Event ⇄ polling state machine with reconnect
 ```
 
 - **Domain layer**: All pure functions. Zero external dependencies.
@@ -217,7 +221,7 @@ src/
 ## Design highlights
 
 - **Clipboard is never written**: Uses `wl-paste` only. The Windows clipboard is untouched.
-- **Event-driven detection**: Subscribes to X11 XFixes CLIPBOARD owner-change notifications (WSLg mirrors every Windows-side copy to X11), so images are detected near-instantly with zero idle wakeups. Only the notification comes from X11 — data still flows read-only through `wl-paste`. Falls back to polling when X11 is unavailable.
+- **Event-driven detection**: Subscribes to X11 XFixes CLIPBOARD owner-change notifications (WSLg mirrors every Windows-side copy to X11), so images are detected near-instantly with zero idle wakeups. Only the notification comes from X11 — data still flows read-only through `wl-paste`. Falls back to polling when X11 is unavailable and reconnects automatically with capped exponential backoff.
 - **File-based path notification**: `latest-path` file + `latest.png` symlink.
 - **Atomic updates**: Temp file -> rename keeps both the path file and the symlink update safe.
 - **Shell hook integration**: Alt+V inserts the path for an image clipboard, or performs a normal paste for text.

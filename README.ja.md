@@ -93,7 +93,9 @@ clipboard2path-wsl
 
 検知はイベント駆動（X11 XFixes の selection 通知 — ほぼゼロ遅延・アイドル時の
 ウェイクアップなし）。X サーバーに接続できない場合は `--interval`
-（デフォルト 500ms）のポーリングにフォールバックする。
+（デフォルト 500ms）のポーリングにフォールバックし、上限付き exponential
+backoff（1s から倍々、最大 60s）で X11 再接続を試行し続け、成功したら
+自動的にイベントモードへ復帰する。
 
 ### 単発実行
 
@@ -186,6 +188,7 @@ src/
     image_convert.rs       #   BMP -> PNG 変換
     path_gen.rs            #   保存先パス生成
     wsl_detect.rs          #   WSL2 環境判定
+    backoff.rs             #   再接続 backoff スケジュール
     clipboard_change.rs    #   クリップボード変更検知
     runtime_dir.rs         #   ランタイムディレクトリ解決
     cleanup.rs             #   一時ファイルクリーンアップ
@@ -207,7 +210,8 @@ src/
     wrapper_installer.rs   #   wl-paste ラッパー設置（マーカーベース所有権判定）
   service/                 # オーケストレーション
     converter.rs           #   変換フロー
-    daemon.rs              #   ポーリングループ
+    daemon.rs              #   単発観測ロジック（poll / event）
+    watch.rs               #   event ⇄ polling 状態機械（再接続付き）
 ```
 
 - **ドメイン層**: 全て純粋関数。外部依存ゼロ。
@@ -217,7 +221,7 @@ src/
 ## 設計上の特徴
 
 - **クリップボード非書き換え**: `wl-paste` のみ使用。Windows 側クリップボードに影響しない。
-- **イベント駆動検知**: X11 XFixes の CLIPBOARD 所有者変更通知を購読（WSLg は Windows 側のコピーを X11 にミラーする）し、ほぼゼロ遅延・アイドル時ウェイクアップなしで検知。X11 から受け取るのは通知のみで、データ取得は従来どおり `wl-paste` 経由の読み取り専用。X11 が使えなければポーリングにフォールバック。
+- **イベント駆動検知**: X11 XFixes の CLIPBOARD 所有者変更通知を購読（WSLg は Windows 側のコピーを X11 にミラーする）し、ほぼゼロ遅延・アイドル時ウェイクアップなしで検知。X11 から受け取るのは通知のみで、データ取得は従来どおり `wl-paste` 経由の読み取り専用。X11 が使えなければポーリングにフォールバックし、上限付き exponential backoff で自動再接続する。
 - **ファイル経由のパス通知**: `latest-path` ファイル + `latest.png` シンボリックリンク。
 - **アトミック更新**: 一時ファイル -> rename でパス通知もシンボリックリンク更新も安全。
 - **シェルフック統合**: Alt+V が画像クリップボード時はパスを、テキスト時は通常ペーストを実行。

@@ -70,8 +70,14 @@ where
 /// Skips the MIME-type comparison on purpose: two consecutive screenshot
 /// copies produce identical type lists, so comparing would miss the second
 /// one. The owner-change event itself is the evidence that a copy happened.
-pub fn on_change_event<C, F, T, N>(
+///
+/// Still keeps `previous_types` current, so a later switch to the polling
+/// mode compares against the truly last-observed state instead of a stale
+/// one. On a clipboard read error the buffer is left untouched — a failed
+/// observation must not be recorded as an observed state.
+pub fn process_event<C, F, T, N>(
     service: &ConvertService<C, F, T, N>,
+    previous_types: &mut Vec<String>,
     base_dir: &Path,
 ) -> PollResult
 where
@@ -85,7 +91,11 @@ where
         Err(e) => return PollResult::ClipboardError(e.to_string()),
     };
 
-    handle_changed_clipboard(service, &current_types, base_dir)
+    let result = handle_changed_clipboard(service, &current_types, base_dir);
+
+    previous_types.clear();
+    previous_types.extend(current_types);
+    result
 }
 
 /// Convert the clipboard content, or clear the notification when it holds
@@ -178,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn on_change_event_converts_consecutive_copies_with_identical_types() {
+    fn process_event_converts_consecutive_copies_with_identical_types() {
         let bmp = make_1x1_bmp();
         let service = ConvertService::new(
             MockClipboardReader {
@@ -192,15 +202,54 @@ mod tests {
 
         // Two events with identical type lists = two separate copies
         // (e.g. screenshot A then screenshot B). Both must convert.
-        let first = on_change_event(&service, Path::new("/tmp"));
-        let second = on_change_event(&service, Path::new("/tmp"));
+        let mut carry = Vec::new();
+        let first = process_event(&service, &mut carry, Path::new("/tmp"));
+        let second = process_event(&service, &mut carry, Path::new("/tmp"));
 
         assert!(matches!(first, PollResult::Converted(_)));
         assert!(matches!(second, PollResult::Converted(_)));
     }
 
     #[test]
-    fn on_change_event_skips_when_clipboard_holds_no_image() {
+    fn process_event_records_observed_types_for_mode_transitions() {
+        let bmp = make_1x1_bmp();
+        let service = ConvertService::new(
+            MockClipboardReader {
+                types: vec!["image/bmp".to_string()],
+                bmp_data: bmp,
+            },
+            MockFileWriter,
+            FixedTimestamp("1".into()),
+            MockPathNotifier,
+        );
+
+        let mut carry = vec!["text/plain".to_string()];
+        process_event(&service, &mut carry, Path::new("/tmp"));
+
+        // A subsequent polling pass must see this state as already observed
+        assert_eq!(carry, vec!["image/bmp".to_string()]);
+        let polled = poll_once(&service, &mut carry, Path::new("/tmp"));
+        assert_eq!(polled, PollResult::NoChange);
+    }
+
+    #[test]
+    fn process_event_keeps_carry_on_clipboard_error() {
+        let service = ConvertService::new(
+            FailingListClipboardReader,
+            MockFileWriter,
+            FixedTimestamp("1".into()),
+            MockPathNotifier,
+        );
+
+        let mut carry = vec!["image/bmp".to_string()];
+        let result = process_event(&service, &mut carry, Path::new("/tmp"));
+
+        assert!(matches!(result, PollResult::ClipboardError(_)));
+        assert_eq!(carry, vec!["image/bmp".to_string()]);
+    }
+
+    #[test]
+    fn process_event_skips_when_clipboard_holds_no_image() {
         let service = ConvertService::new(
             MockClipboardReader {
                 types: vec!["text/plain".to_string()],
@@ -211,7 +260,8 @@ mod tests {
             MockPathNotifier,
         );
 
-        let result = on_change_event(&service, Path::new("/tmp"));
+        let mut carry = Vec::new();
+        let result = process_event(&service, &mut carry, Path::new("/tmp"));
 
         assert_eq!(result, PollResult::NoBmpImage);
     }

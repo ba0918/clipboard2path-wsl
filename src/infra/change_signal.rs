@@ -39,7 +39,7 @@ impl fmt::Display for SignalError {
 }
 
 impl SignalError {
-    fn new(context: &str, err: impl fmt::Display) -> Self {
+    pub(crate) fn new(context: &str, err: impl fmt::Display) -> Self {
         Self(format!("{context}: {err}"))
     }
 }
@@ -49,6 +49,11 @@ pub trait ChangeSignal {
     /// Wait for the next clipboard change. Coalesces event bursts belonging
     /// to a single copy operation into one notification.
     fn wait_change(&mut self) -> Result<(), SignalError>;
+
+    /// Discard queued change events without blocking. Used before a
+    /// catch-up snapshot: content those events announce is about to be
+    /// observed directly, so acting on them afterwards would double-convert.
+    fn drain_pending(&mut self) -> Result<(), SignalError>;
 }
 
 /// XFixes-based implementation listening on the X11 CLIPBOARD selection.
@@ -96,6 +101,25 @@ impl X11ChangeSignal {
     }
 }
 
+impl X11ChangeSignal {
+    /// Discard currently queued events. Bounded so a pathological event
+    /// flood cannot pin the loop; the handler reads the latest clipboard
+    /// state anyway, so leftover events only cause one extra (harmless)
+    /// wakeup.
+    fn drain_queued(&mut self) -> Result<(), SignalError> {
+        for _ in 0..DRAIN_LIMIT {
+            let drained = self
+                .conn
+                .poll_for_event()
+                .map_err(|e| SignalError::new("event poll failed", e))?;
+            if drained.is_none() {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl ChangeSignal for X11ChangeSignal {
     fn wait_change(&mut self) -> Result<(), SignalError> {
         loop {
@@ -109,20 +133,11 @@ impl ChangeSignal for X11ChangeSignal {
         }
 
         // Coalesce the burst: absorb follow-up events from the same copy.
-        // Bounded so a pathological event flood cannot pin this loop; the
-        // handler reads the latest clipboard state anyway, so leftover
-        // events only cause one extra (harmless) wakeup.
         thread::sleep(SETTLE);
-        for _ in 0..DRAIN_LIMIT {
-            let drained = self
-                .conn
-                .poll_for_event()
-                .map_err(|e| SignalError::new("event poll failed", e))?;
-            if drained.is_none() {
-                break;
-            }
-        }
+        self.drain_queued()
+    }
 
-        Ok(())
+    fn drain_pending(&mut self) -> Result<(), SignalError> {
+        self.drain_queued()
     }
 }
